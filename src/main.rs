@@ -16,7 +16,7 @@ fn main() {
         if let Ok(bytes_read) = read(stdin, &mut c) {
             println!("number of bytes read {:?}: {:?}", bytes_read, c);
 
-            if 0 == bytes_read {
+            if 0 == bytes_read || b'q' == c[0] {
                 println!("no more input, exiting");
                 return;
             }

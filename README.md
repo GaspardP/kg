@@ -19,7 +19,7 @@ The project depends on:
 
 ## Usage
 
-- `C-c` to quit
+- `q` + `Enter` to quit
 - `Enter` to read input
 
 ```bash
