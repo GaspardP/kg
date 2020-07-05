@@ -5,3 +5,4 @@ authors = ["GaspardP"]
 
 [dependencies]
 nix = "0.18.0"
+termios = "0.3.2"

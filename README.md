@@ -15,6 +15,7 @@ The project depends on:
 
 - [nix][nix] for abstracting and providing a safe interface to the C POSIX
   library.
+- [termios-rs][termios-rs] to provide safe bindings the the C termios library.
 
 
 ## Usage
@@ -49,3 +50,4 @@ clause license.
 [kilo-tutorial]: https://viewsourcecode.org/snaptoken/kilo/
 [kilo]: https://github.com/antirez/kilo
 [nix]: https://github.com/nix-rust/nix
+[termios-rs]: https://github.com/dcuddeback/termios-rs
