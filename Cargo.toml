@@ -1,0 +1,7 @@
+[package]
+name = "kg"
+version = "0.1.0"
+authors = ["GaspardP"]
+
+[dependencies]
+nix = "0.18.0"
