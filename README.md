@@ -20,6 +20,7 @@ The project depends on:
 
 ## Usage
 
+Input will not be displayed.
 - `q` + `Enter` to quit
 - `Enter` to read input
 
