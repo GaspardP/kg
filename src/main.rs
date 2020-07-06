@@ -2,7 +2,7 @@ extern crate nix;
 extern crate termios;
 
 use nix::unistd::{read};
-use termios::{Termios, ECHO, ICANON, IEXTEN, ISIG, IXON, TCSAFLUSH,
+use termios::{Termios, ECHO, ICANON, ICRNL, IEXTEN, ISIG, IXON, TCSAFLUSH,
               tcgetattr, tcsetattr};
 use std::os::unix::io::{RawFd};
 
@@ -13,9 +13,10 @@ use std::os::unix::io::{RawFd};
 /// The `IEXTEN` flag is used to deactivate the additional special characters
 /// such as `EOL2` or `LNEXT`. The `ISIG` flag is used to deactivate the signal
 /// chars. The program will be able to process the `ÌNTR`, `QUIT` etc.
-/// characters as inputs instead of signals. The `IXON` flag is used to
-/// deactivate the software control flow control characters (C-s and C-q). Those
-/// were used to pause transmission of input.
+/// characters as inputs instead of signals. The `ICRNL` flag is used to
+/// deactivate the transformation of all carriage return characters to newlines.
+/// The `IXON` flag is used to deactivate the software control flow control
+/// characters (C-s and C-q). Those were used to pause transmission of input.
 ///
 /// Terminal attributes can be read with `tcgetattr` and changed with
 /// `tcsetattr`. `TCSAFLUSH` specifies that the changes will be applied once all
@@ -24,12 +25,12 @@ use std::os::unix::io::{RawFd};
 /// ---
 /// struct termios raw;
 /// tcgetattr(STDIN_FILENO, &raw);
-/// raw.c_iflag &= ~(IXON);
+/// raw.c_iflag &= ~(ICRNL | IXON);
 /// raw.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG);
 /// tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
 fn enable_raw_mode(fd:RawFd, mut termios:Termios) -> Result<(),std::io::Error> {
     tcgetattr(fd, &mut termios)?;
-    termios.c_iflag &= !(IXON);
+    termios.c_iflag &= !(ICRNL | IXON);
     termios.c_lflag &= !(ECHO | ICANON | IEXTEN | ISIG);
     tcsetattr(fd, TCSAFLUSH, &termios)?;
     // Returns Result::Ok if none of the previous function calls triggered an
