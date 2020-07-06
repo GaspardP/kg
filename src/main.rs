@@ -4,7 +4,8 @@ extern crate termios;
 use nix::unistd::read;
 use std::os::unix::io::RawFd;
 use termios::{
-    tcgetattr, tcsetattr, Termios, ECHO, ICANON, ICRNL, IEXTEN, ISIG, IXON, OPOST, TCSAFLUSH,
+    tcgetattr, tcsetattr, Termios, BRKINT, CS8, ECHO, ICANON, ICRNL, IEXTEN, INPCK, ISIG, ISTRIP,
+    IXON, OPOST, TCSAFLUSH,
 };
 
 /// The `ECHO` feature prints each key typed in the terminal. This is the
@@ -21,7 +22,9 @@ use termios::{
 /// The `OPOST` flag is used to turn off the output processing features (such as
 /// moving the cursor back to the begining of the line when the carriage return
 /// '\r' input is received). Because of the cursor needs to be explicitly
-/// "returned" to the begining of the line when calling `print!`.
+/// "returned" to the begining of the line when calling `print!`. The `BRKINT`,
+/// `INPCK` and `ISTRIP` flags and the `CS8` bitmask are all legacy features
+/// that are most likely turned off by default.
 ///
 /// Terminal attributes can be read with `tcgetattr` and changed with
 /// `tcsetattr`. `TCSAFLUSH` specifies that the changes will be applied once all
@@ -30,13 +33,15 @@ use termios::{
 /// ---
 /// struct termios raw;
 /// tcgetattr(STDIN_FILENO, &raw);
-/// raw.c_iflag &= ~(ICRNL | IXON);
+/// raw.c_cflag |= (CS8);
+/// raw.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
 /// raw.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG);
 /// raw.c_oflag &= ~(OPOST);
 /// tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
 fn enable_raw_mode(fd: RawFd, mut termios: Termios) -> Result<(), std::io::Error> {
     tcgetattr(fd, &mut termios)?;
-    termios.c_iflag &= !(ICRNL | IXON);
+    termios.c_cflag |= CS8;
+    termios.c_iflag &= !(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
     termios.c_lflag &= !(ECHO | ICANON | IEXTEN | ISIG);
     termios.c_oflag &= !(OPOST);
     tcsetattr(fd, TCSAFLUSH, &termios)?;
