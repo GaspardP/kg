@@ -2,14 +2,16 @@ extern crate nix;
 extern crate termios;
 
 use nix::unistd::{read};
-use termios::{Termios, ECHO, ICANON, TCSAFLUSH, tcgetattr, tcsetattr};
+use termios::{Termios, ECHO, ICANON, ISIG, TCSAFLUSH, tcgetattr, tcsetattr};
 use std::os::unix::io::{RawFd};
 
 /// The `ECHO` feature prints each key typed in the terminal. This is the
 /// default behaviour in cannonical mode. This function makes sure the feature
-/// is deactivated. The `ICANON` is also turned off to completly deactivate the
-/// canonical mode. This will allow the input to be read byte-by-byte instead of
-/// line-by-line.
+/// is deactivated. The `ICANON` flag is used to deactivate the canonical mode.
+/// This will allow the input to be read byte-by-byte instead of line-by-line.
+/// The `ISIG` flag is used to deactivate the signal chars. The program will be
+/// able to process the `ÌNTR`, `QUIT` etc. characters as inputs instead of
+/// signals.
 ///
 /// Terminal attributes can be read with `tcgetattr` and changed with
 /// `tcsetattr`. `TCSAFLUSH` specifies that the changes will be applied once all
@@ -18,11 +20,11 @@ use std::os::unix::io::{RawFd};
 /// ---
 /// struct termios raw;
 /// tcgetattr(STDIN_FILENO, &raw);
-/// raw.c_lflag &= ~(ECHO | ICANON);
+/// raw.c_lflag &= ~(ECHO | ICANON | ISIG);
 /// tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
 fn enable_raw_mode(fd:RawFd, mut termios:Termios) -> Result<(),std::io::Error> {
     tcgetattr(fd, &mut termios)?;
-    termios.c_lflag &= !(ECHO | ICANON);
+    termios.c_lflag &= !(ECHO | ICANON | ISIG);
     tcsetattr(fd, TCSAFLUSH, &termios)?;
     // Returns Result::Ok if none of the previous function calls triggered an
     // error. Errors will get automatically propagated thanks to the `?` try
