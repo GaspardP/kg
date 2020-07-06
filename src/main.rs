@@ -62,7 +62,13 @@ fn main() {
         // nix's `read` implementation reads as many bytes as the buffer passed
         // in.
         if let Ok(bytes_read) = read(stdin, &mut c) {
-            println!("number of bytes read {:?}: {:?}", bytes_read, c);
+            let ch = c[0] as char;
+
+            if ch.is_control() {
+                println!("number of bytes read {:?}: {:?}", bytes_read, c);
+            } else {
+                println!("number of bytes read {:?}: {:?} ('{}')", bytes_read, c, ch);
+            }
 
             if 0 == bytes_read || b'q' == c[0] {
                 println!("no more input, exiting");
