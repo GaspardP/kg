@@ -3,6 +3,7 @@ extern crate termios;
 
 use nix::unistd::read;
 use std::os::unix::io::RawFd;
+use termios::os::target::{VMIN, VTIME};
 use termios::{
     tcgetattr, tcsetattr, Termios, BRKINT, CS8, ECHO, ICANON, ICRNL, IEXTEN, INPCK, ISIG, ISTRIP,
     IXON, OPOST, TCSAFLUSH,
@@ -26,6 +27,13 @@ use termios::{
 /// `INPCK` and `ISTRIP` flags and the `CS8` bitmask are all legacy features
 /// that are most likely turned off by default.
 ///
+/// The array `c_cc` contains the "control characters" settings. The `VMIN`
+/// value defines the minimum number of bytes need before `read()` can return.
+/// Setting it to `0` means the `read()` will return as soon as there is an
+/// input to be read. The `VTIME` value defines the amount of time `read()` will
+/// wait for an input, in 1/10 of a second. If no input has been provided before
+/// the timeout `read()` will return `0` (i.e. no bytes read).
+///
 /// Terminal attributes can be read with `tcgetattr` and changed with
 /// `tcsetattr`. `TCSAFLUSH` specifies that the changes will be applied once all
 /// pending output have been written to the terminal and discards any unread
@@ -37,6 +45,8 @@ use termios::{
 /// raw.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
 /// raw.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG);
 /// raw.c_oflag &= ~(OPOST);
+/// raw.c_cc[VMIN] = 0;
+/// raw.c_cc[VTIME] = 1;
 /// tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
 fn enable_raw_mode(fd: RawFd, mut termios: Termios) -> Result<(), std::io::Error> {
     tcgetattr(fd, &mut termios)?;
@@ -44,6 +54,8 @@ fn enable_raw_mode(fd: RawFd, mut termios: Termios) -> Result<(), std::io::Error
     termios.c_iflag &= !(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
     termios.c_lflag &= !(ECHO | ICANON | IEXTEN | ISIG);
     termios.c_oflag &= !(OPOST);
+    termios.c_cc[VMIN] = 0;
+    termios.c_cc[VTIME] = 1;
     tcsetattr(fd, TCSAFLUSH, &termios)?;
     // Returns Result::Ok if none of the previous function calls triggered an
     // error. Errors will get automatically propagated thanks to the `?` try
@@ -59,8 +71,6 @@ fn disable_raw_mode(fd: RawFd, original: Termios) -> Result<(), std::io::Error> 
     Ok(())
 }
 
-/// char c;
-/// while (read(STDIN_FILENO, &c, 1) == 1);
 fn main() {
     let stdin: RawFd = 0;
     let original_termios = if let Result::Ok(termios) = Termios::from_fd(stdin) {
@@ -80,6 +90,8 @@ fn main() {
     let mut c = [0u8; 1];
 
     loop {
+        c[0] = b'\0';
+
         // nix's `read` implementation reads as many bytes as the buffer passed
         // in.
         if let Ok(bytes_read) = read(stdin, &mut c) {
@@ -94,7 +106,7 @@ fn main() {
                 );
             }
 
-            if 0 == bytes_read || b'q' == c[0] {
+            if b'q' == c[0] {
                 print!("no more input, exiting\r\n");
                 // breaking out of the loop instead of returning to make sure we
                 // run the clean up functions.
