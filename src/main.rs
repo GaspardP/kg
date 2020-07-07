@@ -11,6 +11,19 @@ use termios::{
     IXON, OPOST, TCSAFLUSH,
 };
 
+/*** define ***/
+
+/// Bitwise-AND with `00011111` or `0x1f` to set the upper 3 bits characters to
+/// `0`. By convention the terminal strips bits 5 and 6 of the key pressed
+/// together with `Ctrl`.
+///---
+/// #define CTRL_KEY(k) ((k) & 0x1f)
+fn ctrl_key(c: char) -> char {
+    let n = c as u8;
+    let ctrl = n & 0x1f;
+    ctrl as char
+}
+
 /*** data ***/
 
 /*** terminal ***/
@@ -105,7 +118,7 @@ fn main() -> Result<(), std::io::Error> {
                 );
             }
 
-            if b'q' == c[0] {
+            if ctrl_key('q') == ch {
                 print!("no more input, exiting\r\n");
                 // breaking out of the loop instead of returning to make sure we
                 // run the clean up functions.
