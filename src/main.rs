@@ -56,34 +56,25 @@ fn enable_raw_mode(fd: RawFd, mut termios: Termios) -> Result<(), std::io::Error
     termios.c_oflag &= !(OPOST);
     termios.c_cc[VMIN] = 0;
     termios.c_cc[VTIME] = 1;
-    tcsetattr(fd, TCSAFLUSH, &termios)?;
+
     // Returns Result::Ok if none of the previous function calls triggered an
     // error. Errors will get automatically propagated thanks to the `?` try
     // operator.
-    Ok(())
+    tcsetattr(fd, TCSAFLUSH, &termios)
 }
 
 /// Sets the ternimal attributes back to the original
 /// ---
 /// tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
 fn disable_raw_mode(fd: RawFd, original: Termios) -> Result<(), std::io::Error> {
-    tcsetattr(fd, TCSAFLUSH, &original)?;
-    Ok(())
+    tcsetattr(fd, TCSAFLUSH, &original)
 }
 
-fn main() {
+fn main() -> Result<(), std::io::Error> {
     let stdin: RawFd = 0;
-    let original_termios = if let Result::Ok(termios) = Termios::from_fd(stdin) {
-        termios
-    } else {
-        print!("Could not create termios instance\r\n");
-        return;
-    };
+    let original_termios = Termios::from_fd(stdin)?;
 
-    if let Result::Err(e) = enable_raw_mode(stdin, original_termios) {
-        print!("Could not activate raw mode: {:?}\r\n", e);
-        return;
-    }
+    enable_raw_mode(stdin, original_termios)?;
 
     // Using an array instead of a `char` as the `read` function expects a
     // slice.
@@ -117,7 +108,7 @@ fn main() {
         }
     }
 
-    if let Result::Err(e) = disable_raw_mode(stdin, original_termios) {
-        print!("Could not deactivate raw mode: {:?}\r\n", e);
-    }
+    disable_raw_mode(stdin, original_termios)?;
+
+    Result::Ok(())
 }
