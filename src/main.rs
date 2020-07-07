@@ -1,3 +1,5 @@
+/*** includes ***/
+
 extern crate nix;
 extern crate termios;
 
@@ -8,6 +10,10 @@ use termios::{
     tcgetattr, tcsetattr, Termios, BRKINT, CS8, ECHO, ICANON, ICRNL, IEXTEN, INPCK, ISIG, ISTRIP,
     IXON, OPOST, TCSAFLUSH,
 };
+
+/*** data ***/
+
+/*** terminal ***/
 
 /// The `ECHO` feature prints each key typed in the terminal. This is the
 /// default behaviour in cannonical mode. This function makes sure the feature
@@ -69,6 +75,8 @@ fn enable_raw_mode(fd: RawFd, mut termios: Termios) -> Result<(), std::io::Error
 fn disable_raw_mode(fd: RawFd, original: Termios) -> Result<(), std::io::Error> {
     tcsetattr(fd, TCSAFLUSH, &original)
 }
+
+/*** init ***/
 
 fn main() -> Result<(), std::io::Error> {
     let stdin: RawFd = 0;
