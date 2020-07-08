@@ -24,6 +24,11 @@ fn ctrl_key(c: u8) -> u8 {
 
 /*** data ***/
 
+enum Event {
+    Quit,
+    None,
+}
+
 /*** terminal ***/
 
 /// The `ECHO` feature prints each key typed in the terminal. This is the
@@ -108,6 +113,22 @@ fn editor_read_key(stdin: RawFd) -> Result<u8, std::io::Error> {
 
 /*** input ***/
 
+/// char c = editorReadKey();
+/// switch (c) {
+///   case CTRL_KEY('q'):
+///     exit(0);
+///     break;
+/// }
+fn editor_process_keypress(stdin: RawFd) -> Result<Event, std::io::Error> {
+    let result = if editor_read_key(stdin)? == ctrl_key(b'q') {
+        eprint!("no more input, exiting\r\n");
+        Event::Quit
+    } else {
+        Event::None
+    };
+    Result::Ok(result)
+}
+
 /*** init ***/
 
 fn main() -> Result<(), std::io::Error> {
@@ -117,13 +138,9 @@ fn main() -> Result<(), std::io::Error> {
     enable_raw_mode(stdin, original_termios)?;
 
     loop {
-        let c = editor_read_key(stdin)?;
-
-        if ctrl_key(b'q') == c {
-            print!("no more input, exiting\r\n");
-            // breaking out of the loop instead of returning to make sure we
-            // run the clean up functions.
-            break;
+        match editor_process_keypress(stdin)? {
+            Event::Quit => break,
+            Event::None => continue,
         }
     }
 
