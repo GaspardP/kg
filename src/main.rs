@@ -18,10 +18,8 @@ use termios::{
 /// together with `Ctrl`.
 ///---
 /// #define CTRL_KEY(k) ((k) & 0x1f)
-fn ctrl_key(c: char) -> char {
-    let n = c as u8;
-    let ctrl = n & 0x1f;
-    ctrl as char
+fn ctrl_key(c: u8) -> u8 {
+    c & 0x1f
 }
 
 /*** data ***/
@@ -89,6 +87,27 @@ fn disable_raw_mode(fd: RawFd, original: Termios) -> Result<(), std::io::Error> 
     tcsetattr(fd, TCSAFLUSH, &original)
 }
 
+/// int nread;
+/// char c;
+/// while ((nread = read(STDIN_FILENO, &c, 1)) != 1) {
+///   if (nread == -1 && errno != EAGAIN) die("read");
+/// }
+/// return c;
+fn editor_read_key(stdin: RawFd) -> Result<u8, std::io::Error> {
+    fn to_io_err(_error: nix::Error) -> std::io::Error {
+        use std::io::{Error, ErrorKind};
+        Error::new(ErrorKind::InvalidInput, "Error during `read()`")
+    }
+
+    let mut buffer = [0u8; 1];
+    // nix's `read` implementation reads a maximum of as many bytes as the
+    // buffer passed in.
+    while 1 != read(stdin, &mut buffer).map_err(to_io_err)? {}
+    Result::Ok(buffer[0])
+}
+
+/*** input ***/
+
 /*** init ***/
 
 fn main() -> Result<(), std::io::Error> {
@@ -97,35 +116,14 @@ fn main() -> Result<(), std::io::Error> {
 
     enable_raw_mode(stdin, original_termios)?;
 
-    // Using an array instead of a `char` as the `read` function expects a
-    // slice.
-    let mut c = [0u8; 1];
-
     loop {
-        c[0] = b'\0';
+        let c = editor_read_key(stdin)?;
 
-        // nix's `read` implementation reads as many bytes as the buffer passed
-        // in.
-        if let Ok(bytes_read) = read(stdin, &mut c) {
-            let ch = c[0] as char;
-
-            if ch.is_control() {
-                print!("number of bytes read {:?}: {:?}\r\n", bytes_read, c);
-            } else {
-                print!(
-                    "number of bytes read {:?}: {:?} ('{}')\r\n",
-                    bytes_read, c, ch
-                );
-            }
-
-            if ctrl_key('q') == ch {
-                print!("no more input, exiting\r\n");
-                // breaking out of the loop instead of returning to make sure we
-                // run the clean up functions.
-                break;
-            }
-        } else {
-            print!("Error while reading stdin\r\n");
+        if ctrl_key(b'q') == c {
+            print!("no more input, exiting\r\n");
+            // breaking out of the loop instead of returning to make sure we
+            // run the clean up functions.
+            break;
         }
     }
 
