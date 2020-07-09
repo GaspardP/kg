@@ -3,7 +3,7 @@
 extern crate nix;
 extern crate termios;
 
-use nix::unistd::read;
+use nix::unistd::{read, write};
 use std::os::unix::io::RawFd;
 use termios::os::target::{VMIN, VTIME};
 use termios::{
@@ -111,6 +111,24 @@ fn editor_read_key(stdin: RawFd) -> Result<u8, std::io::Error> {
     Result::Ok(buffer[0])
 }
 
+/*** output ***/
+
+/// Writes the "ED" escape sequence (clear screen [1]) to the terminal. `\x1b`
+/// starts the escape sequence and the sequence `[2J` clears the whole screen.
+///
+/// [1] https://vt100.net/docs/vt100-ug/chapter3.html#ED
+/// ---
+/// write(STDOUT_FILENO, "\x1b[2J", 4);
+fn editor_refresh_screen(stdout: RawFd) -> Result<usize, std::io::Error> {
+    fn to_io_err(_error: nix::Error) -> std::io::Error {
+        use std::io::{Error, ErrorKind};
+        Error::new(ErrorKind::Other, "Error during `write()`")
+    }
+
+    let clear_sequence = b"\x1b[2J";
+    write(stdout, clear_sequence).map_err(to_io_err)
+}
+
 /*** input ***/
 
 /// char c = editorReadKey();
@@ -132,12 +150,16 @@ fn editor_process_keypress(stdin: RawFd) -> Result<Event, std::io::Error> {
 /*** init ***/
 
 fn main() -> Result<(), std::io::Error> {
-    let stdin: RawFd = 0;
+    use std::os::unix::io::AsRawFd;
+    let stdin: RawFd = std::io::stdin().as_raw_fd();
+    let stdout: RawFd = std::io::stdout().as_raw_fd();
+
     let original_termios = Termios::from_fd(stdin)?;
 
     enable_raw_mode(stdin, original_termios)?;
 
     loop {
+        editor_refresh_screen(stdout)?;
         match editor_process_keypress(stdin)? {
             Event::Quit => break,
             Event::None => continue,
