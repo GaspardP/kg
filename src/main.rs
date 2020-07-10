@@ -126,10 +126,31 @@ fn editor_read_key(stdin: RawFd) -> Result<u8, Error> {
     // nix's `read` implementation reads a maximum of as many bytes as the
     // buffer passed in.
     while 1 != read(stdin, &mut buffer)? {}
+
+    let c = buffer[0] as char;
+    if c.is_control() {
+        eprint!("read: {:?}\r\n", buffer);
+    } else {
+        eprint!("read: {:?} ('{}')\r\n", buffer, c);
+    }
+
     Result::Ok(buffer[0])
 }
 
 /*** output ***/
+
+/// Draws a vertical column of 24 `~`
+/// ---
+/// int y;
+/// for (y = 0; y < 24; y++) {
+///   write(STDOUT_FILENO, "~\r\n", 3);
+/// }
+fn editor_draw_rows(stdout: RawFd) -> Result<(), Error> {
+    for _ in 0..24 {
+        write(stdout, b"~\r\n")?;
+    }
+    Result::Ok(())
+}
 
 /// Writes the "ED" escape sequence (clear screen [1]) to the terminal. `\x1b`
 /// starts the escape sequence and the sequence `[2J` clears the whole screen.
@@ -139,6 +160,8 @@ fn editor_read_key(stdin: RawFd) -> Result<u8, Error> {
 /// write(STDOUT_FILENO, "\x1b[2J", 4);
 fn editor_refresh_screen(stdout: RawFd) -> Result<(), Error> {
     write(stdout, CLEAR_SCREEN)?;
+    write(stdout, CURSOR_HOME)?;
+    editor_draw_rows(stdout)?;
     write(stdout, CURSOR_HOME)?;
     Result::Ok(())
 }
