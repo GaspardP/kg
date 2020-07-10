@@ -40,6 +40,26 @@ fn ctrl_key(c:u8) -> u8 {
 
 /*** data ***/
 
+/// Defines an application specific `Error` which will be used to wrap and
+/// manage the errors from the different used libraries.
+#[derive(Debug)]
+enum Error {
+    IoError(std::io::Error),
+    NixError(nix::Error),
+}
+
+impl From<std::io::Error> for Error {
+    fn from(error:std::io::Error) -> Self {
+        Error::IoError(error)
+    }
+}
+
+impl From<nix::Error> for Error {
+    fn from(error:nix::Error) -> Self {
+        Error::NixError(error)
+    }
+}
+
 enum Event {
     Quit,
     None,
@@ -86,7 +106,7 @@ enum Event {
 /// raw.c_cc[VMIN] = 0;
 /// raw.c_cc[VTIME] = 1;
 /// tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
-fn enable_raw_mode(fd:RawFd, mut termios:Termios) -> Result<(),std::io::Error> {
+fn enable_raw_mode(fd:RawFd, mut termios:Termios) -> Result<(), std::io::Error> {
     tcgetattr(fd, &mut termios)?;
     termios.c_cflag |= CS8;
     termios.c_iflag &= !(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
@@ -104,7 +124,7 @@ fn enable_raw_mode(fd:RawFd, mut termios:Termios) -> Result<(),std::io::Error> {
 /// Sets the ternimal attributes back to the original
 /// ---
 /// tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
-fn disable_raw_mode(fd:RawFd, original:Termios) -> Result<(),std::io::Error> {
+fn disable_raw_mode(fd:RawFd, original:Termios) -> Result<(), std::io::Error> {
     tcsetattr(fd, TCSAFLUSH, &original)
 }
 
@@ -114,17 +134,11 @@ fn disable_raw_mode(fd:RawFd, original:Termios) -> Result<(),std::io::Error> {
 ///   if (nread == -1 && errno != EAGAIN) die("read");
 /// }
 /// return c;
-fn editor_read_key(stdin:RawFd) -> Result<u8, std::io::Error> {
-
-    fn to_io_err (_error:nix::Error) -> std::io::Error {
-        use std::io::{Error, ErrorKind};
-        Error::new(ErrorKind::InvalidInput, "Error during `read()`")
-    }
-
+fn editor_read_key(stdin:RawFd) -> Result<u8, Error> {
     let mut buffer = [0u8; 1];
     // nix's `read` implementation reads a maximum of as many bytes as the
     // buffer passed in.
-    while 1 != read(stdin, &mut buffer).map_err(to_io_err)? {}
+    while 1 != read(stdin, &mut buffer)? {}
     Result::Ok(buffer[0])
 }
 
@@ -136,15 +150,12 @@ fn editor_read_key(stdin:RawFd) -> Result<u8, std::io::Error> {
 /// [1] https://vt100.net/docs/vt100-ug/chapter3.html#ED
 /// ---
 /// write(STDOUT_FILENO, "\x1b[2J", 4);
-fn editor_refresh_screen(stdout:RawFd) -> Result<usize,std::io::Error> {
-
-    fn to_io_err (_error:nix::Error) -> std::io::Error {
-        use std::io::{Error, ErrorKind};
-        Error::new(ErrorKind::Other, "Error during `write()`")
-    }
-
+fn editor_refresh_screen(stdout:RawFd) -> Result<(), Error> {
     let clear_sequence = b"\x1b[2J";
-    write(stdout, clear_sequence).map_err(to_io_err)
+    let cursor_home = b"\x1b[H";
+    write(stdout, clear_sequence)?;
+    write(stdout, cursor_home)?;
+    Result::Ok(())
 }
 
 /*** input ***/
@@ -155,7 +166,7 @@ fn editor_refresh_screen(stdout:RawFd) -> Result<usize,std::io::Error> {
 ///     exit(0);
 ///     break;
 /// }
-fn editor_process_keypress(stdin:RawFd) -> Result<Event,std::io::Error> {
+fn editor_process_keypress(stdin:RawFd) -> Result<Event, Error> {
     let result = if editor_read_key(stdin)? == ctrl_key(b'q') {
         eprint!("no more input, exiting\r\n");
         Event::Quit
@@ -167,7 +178,7 @@ fn editor_process_keypress(stdin:RawFd) -> Result<Event,std::io::Error> {
 
 /*** init ***/
 
-fn main() -> Result<(), std::io::Error> {
+fn main() -> Result<(), Error> {
 
     use std::os::unix::io::AsRawFd;
     let stdin:RawFd = std::io::stdin().as_raw_fd();
