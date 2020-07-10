@@ -22,6 +22,9 @@ fn ctrl_key(c: u8) -> u8 {
     c & 0x1f
 }
 
+const CLEAR_SCREEN: &[u8; 4] = b"\x1b[2J";
+const CURSOR_HOME: &[u8; 3] = b"\x1b[H";
+
 /*** data ***/
 
 /// Defines an application specific `Error` which will be used to wrap and
@@ -135,10 +138,8 @@ fn editor_read_key(stdin: RawFd) -> Result<u8, Error> {
 /// ---
 /// write(STDOUT_FILENO, "\x1b[2J", 4);
 fn editor_refresh_screen(stdout: RawFd) -> Result<(), Error> {
-    let clear_sequence = b"\x1b[2J";
-    let cursor_home = b"\x1b[H";
-    write(stdout, clear_sequence)?;
-    write(stdout, cursor_home)?;
+    write(stdout, CLEAR_SCREEN)?;
+    write(stdout, CURSOR_HOME)?;
     Result::Ok(())
 }
 
@@ -179,6 +180,8 @@ fn main() -> Result<(), Error> {
         }
     }
 
+    write(stdout, CLEAR_SCREEN)?;
+    write(stdout, CURSOR_HOME)?;
     disable_raw_mode(stdin, original_termios)?;
 
     Result::Ok(())
