@@ -27,23 +27,27 @@ const CURSOR_HOME: &[u8; 3] = b"\x1b[H";
 
 /*** data ***/
 
+type Line = u32;
+type Column = u32;
+
 /// Defines an application specific `Error` which will be used to wrap and
 /// manage the errors from the different used libraries.
 #[derive(Debug)]
 enum Error {
-    IoError(std::io::Error),
-    NixError(nix::Error),
+    Io(std::io::Error),
+    Nix(nix::Error),
+    Simple(Line, Column),
 }
 
 impl From<std::io::Error> for Error {
     fn from(error: std::io::Error) -> Self {
-        Error::IoError(error)
+        Error::Io(error)
     }
 }
 
 impl From<nix::Error> for Error {
     fn from(error: nix::Error) -> Self {
-        Error::NixError(error)
+        Error::Nix(error)
     }
 }
 
@@ -52,10 +56,13 @@ enum Event {
     None,
 }
 
+#[allow(dead_code)]
 struct EditorConfig {
     original_termios: Termios,
     stdin: RawFd,
     stdout: RawFd,
+    screen_rows: u16,
+    screen_cols: u16,
 }
 
 impl Drop for EditorConfig {
@@ -160,17 +167,46 @@ fn editor_read_key(editor_config: &EditorConfig) -> Result<u8, Error> {
     Result::Ok(buffer[0])
 }
 
+/// struct winsize ws;
+/// if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0) {
+///   return -1;
+/// } else {
+///   *cols = ws.ws_col;
+///   *rows = ws.ws_row;
+///   return 0;
+/// }
+fn get_window_size(stdout: RawFd) -> Result<(u16, u16), Error> {
+    use nix::libc::{ioctl, winsize, TIOCGWINSZ};
+    let res;
+    let mut ws = winsize {
+        ws_col: 0,
+        ws_row: 0,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
+
+    unsafe {
+        res = ioctl(stdout, TIOCGWINSZ, &mut ws);
+    }
+
+    if res == -1 || ws.ws_col == 0 {
+        Result::Err(Error::Simple(line!(), column!()))
+    } else {
+        Result::Ok((ws.ws_row, ws.ws_col))
+    }
+}
+
 /*** output ***/
 
 /// Draws a vertical column of 24 `~`
 /// ---
 /// int y;
-/// for (y = 0; y < 24; y++) {
+/// for (y = 0; y < E.screenrows; y++) {
 ///   write(STDOUT_FILENO, "~\r\n", 3);
 /// }
 fn editor_draw_rows(editor_config: &EditorConfig) -> Result<(), Error> {
     let stdout = editor_config.stdout;
-    for _ in 0..24 {
+    for _ in 0..editor_config.screen_rows {
         write(stdout, b"~\r\n")?;
     }
     Result::Ok(())
@@ -214,19 +250,26 @@ fn editor_process_keypress(editor_config: &EditorConfig) -> Result<Event, Error>
 
 /*** init ***/
 
-fn main() -> Result<(), Error> {
-    use std::os::unix::io::AsRawFd;
-    let stdin: RawFd = std::io::stdin().as_raw_fd();
-    let stdout: RawFd = std::io::stdout().as_raw_fd();
-
+/// if (getWindowSize(&E.screenrows, &E.screencols) == -1) die("getWindowSize");
+fn init_editor(stdin: RawFd, stdout: RawFd) -> Result<EditorConfig, Error> {
     let original_termios = Termios::from_fd(stdin)?;
+    let (screen_rows, screen_cols) = get_window_size(stdout)?;
     let editor_config = EditorConfig {
         original_termios,
         stdin,
         stdout,
+        screen_rows,
+        screen_cols,
     };
+    enable_raw_mode(stdin, editor_config.original_termios)?;
+    Result::Ok(editor_config)
+}
 
-    enable_raw_mode(stdin, original_termios)?;
+fn main() -> Result<(), Error> {
+    use std::os::unix::io::AsRawFd;
+    let stdin: RawFd = std::io::stdin().as_raw_fd();
+    let stdout: RawFd = std::io::stdout().as_raw_fd();
+    let editor_config = init_editor(stdin, stdout)?;
 
     loop {
         editor_refresh_screen(&editor_config)?;
