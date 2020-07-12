@@ -52,6 +52,26 @@ enum Event {
     None,
 }
 
+struct EditorConfig {
+    original_termios: Termios,
+    stdin: RawFd,
+    stdout: RawFd,
+}
+
+impl Drop for EditorConfig {
+    fn drop(&mut self) {
+        match write(self.stdout, CLEAR_SCREEN) {
+            Ok(_) => (),
+            Err(_) => eprintln!("Couldn't clear screen"),
+        }
+        match write(self.stdout, CURSOR_HOME) {
+            Ok(_) => (),
+            Err(_) => eprintln!("Couldn't move cursor back"),
+        }
+        disable_raw_mode(self.stdin, self.original_termios).expect("Couldn't disable raw mode");
+    }
+}
+
 /*** terminal ***/
 
 /// The `ECHO` feature prints each key typed in the terminal. This is the
@@ -84,7 +104,8 @@ enum Event {
 /// pending output have been written to the terminal and discards any unread
 /// inputs.
 /// ---
-/// struct termios raw;
+/// if (tcgetattr(STDIN_FILENO, &E.orig_termios) == -1) die("tcgetattr");
+/// struct termios raw = E.orig_termios;
 /// tcgetattr(STDIN_FILENO, &raw);
 /// raw.c_cflag |= (CS8);
 /// raw.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
@@ -110,7 +131,8 @@ fn enable_raw_mode(fd: RawFd, mut termios: Termios) -> Result<(), std::io::Error
 
 /// Sets the ternimal attributes back to the original
 /// ---
-/// tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
+/// if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &E.orig_termios) == -1)
+///   die("tcsetattr");
 fn disable_raw_mode(fd: RawFd, original: Termios) -> Result<(), std::io::Error> {
     tcsetattr(fd, TCSAFLUSH, &original)
 }
@@ -121,7 +143,8 @@ fn disable_raw_mode(fd: RawFd, original: Termios) -> Result<(), std::io::Error> 
 ///   if (nread == -1 && errno != EAGAIN) die("read");
 /// }
 /// return c;
-fn editor_read_key(stdin: RawFd) -> Result<u8, Error> {
+fn editor_read_key(editor_config: &EditorConfig) -> Result<u8, Error> {
+    let stdin = editor_config.stdin;
     let mut buffer = [0u8; 1];
     // nix's `read` implementation reads a maximum of as many bytes as the
     // buffer passed in.
@@ -145,7 +168,8 @@ fn editor_read_key(stdin: RawFd) -> Result<u8, Error> {
 /// for (y = 0; y < 24; y++) {
 ///   write(STDOUT_FILENO, "~\r\n", 3);
 /// }
-fn editor_draw_rows(stdout: RawFd) -> Result<(), Error> {
+fn editor_draw_rows(editor_config: &EditorConfig) -> Result<(), Error> {
+    let stdout = editor_config.stdout;
     for _ in 0..24 {
         write(stdout, b"~\r\n")?;
     }
@@ -158,10 +182,14 @@ fn editor_draw_rows(stdout: RawFd) -> Result<(), Error> {
 /// [1] https://vt100.net/docs/vt100-ug/chapter3.html#ED
 /// ---
 /// write(STDOUT_FILENO, "\x1b[2J", 4);
-fn editor_refresh_screen(stdout: RawFd) -> Result<(), Error> {
+/// write(STDOUT_FILENO, "\x1b[H", 3);
+/// editorDrawRows();
+/// write(STDOUT_FILENO, "\x1b[H", 3);
+fn editor_refresh_screen(editor_config: &EditorConfig) -> Result<(), Error> {
+    let stdout = editor_config.stdout;
     write(stdout, CLEAR_SCREEN)?;
     write(stdout, CURSOR_HOME)?;
-    editor_draw_rows(stdout)?;
+    editor_draw_rows(editor_config)?;
     write(stdout, CURSOR_HOME)?;
     Result::Ok(())
 }
@@ -174,8 +202,8 @@ fn editor_refresh_screen(stdout: RawFd) -> Result<(), Error> {
 ///     exit(0);
 ///     break;
 /// }
-fn editor_process_keypress(stdin: RawFd) -> Result<Event, Error> {
-    let result = if editor_read_key(stdin)? == ctrl_key(b'q') {
+fn editor_process_keypress(editor_config: &EditorConfig) -> Result<Event, Error> {
+    let result = if editor_read_key(editor_config)? == ctrl_key(b'q') {
         eprint!("no more input, exiting\r\n");
         Event::Quit
     } else {
@@ -192,20 +220,21 @@ fn main() -> Result<(), Error> {
     let stdout: RawFd = std::io::stdout().as_raw_fd();
 
     let original_termios = Termios::from_fd(stdin)?;
+    let editor_config = EditorConfig {
+        original_termios,
+        stdin,
+        stdout,
+    };
 
     enable_raw_mode(stdin, original_termios)?;
 
     loop {
-        editor_refresh_screen(stdout)?;
-        match editor_process_keypress(stdin)? {
+        editor_refresh_screen(&editor_config)?;
+        match editor_process_keypress(&editor_config)? {
             Event::Quit => break,
             Event::None => continue,
         }
     }
-
-    write(stdout, CLEAR_SCREEN)?;
-    write(stdout, CURSOR_HOME)?;
-    disable_raw_mode(stdin, original_termios)?;
 
     Result::Ok(())
 }
