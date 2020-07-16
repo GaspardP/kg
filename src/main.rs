@@ -39,6 +39,12 @@ enum Error {
     Simple(Line, Column),
 }
 
+macro_rules! simple_error {
+    () => {
+        Result::Err(Error::Simple(line!(), column!()))
+    };
+}
+
 impl From<std::io::Error> for Error {
     fn from(error: std::io::Error) -> Self {
         Error::Io(error)
@@ -167,9 +173,33 @@ fn editor_read_key(editor_config: &EditorConfig) -> Result<u8, Error> {
     Result::Ok(buffer[0])
 }
 
+// temp function to not have to pass the whole editor to the get_window_size
+// function
+fn read_key(stdin: RawFd) -> Result<char, Error> {
+    let mut buffer = [0u8; 1];
+    let bytes_read = read(stdin, &mut buffer)?;
+    let c = buffer[0] as char;
+
+    if c.is_control() {
+        eprint!("number of bytes read {:?}: {:?}\r\n", bytes_read, buffer);
+    } else {
+        eprint!(
+            "number of bytes read {:?}: {:?} ('{}')\r\n",
+            bytes_read, buffer, c
+        );
+    }
+
+    Result::Ok(c)
+}
+
+/// Tries to get the Terminal size through the `ioctl` TIOCGWINSZ. If this
+/// fails, tries to fetch the size by moving the cursor to arbitrary big values
+/// and reading the cursor position.
+///---
 /// struct winsize ws;
-/// if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0) {
-///   return -1;
+/// if (1 || ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0) {
+///   if (write(STDOUT_FILENO, "\x1b[999C\x1b[999B", 12) != 12) return -1;
+///   editorReadKey();
 /// } else {
 ///   *cols = ws.ws_col;
 ///   *rows = ws.ws_row;
@@ -177,6 +207,8 @@ fn editor_read_key(editor_config: &EditorConfig) -> Result<u8, Error> {
 /// }
 fn get_window_size(stdout: RawFd) -> Result<(u16, u16), Error> {
     use nix::libc::{ioctl, winsize, TIOCGWINSZ};
+    use std::os::unix::io::AsRawFd;
+
     let res;
     let mut ws = winsize {
         ws_col: 0,
@@ -189,8 +221,19 @@ fn get_window_size(stdout: RawFd) -> Result<(u16, u16), Error> {
         res = ioctl(stdout, TIOCGWINSZ, &mut ws);
     }
 
-    if res == -1 || ws.ws_col == 0 {
-        Result::Err(Error::Simple(line!(), column!()))
+    // TODO Remove this when the implementation is fixed
+    if true || res == -1 || ws.ws_col == 0 {
+        // Cursor Forward 999, Cursor Down 999
+        let bytes_written = write(stdout, b"\x1b[999C\x1b[999B")?;
+        if 12 != bytes_written {
+            return simple_error!();
+        }
+
+        // TODO Remove. Importing stdin here directly change across the
+        // whole program
+        let stdin = std::io::stdin().as_raw_fd();
+        read_key(stdin)?;
+        simple_error!()
     } else {
         Result::Ok((ws.ws_row, ws.ws_col))
     }
@@ -253,6 +296,7 @@ fn editor_process_keypress(editor_config: &EditorConfig) -> Result<Event, Error>
 /// if (getWindowSize(&E.screenrows, &E.screencols) == -1) die("getWindowSize");
 fn init_editor(stdin: RawFd, stdout: RawFd) -> Result<EditorConfig, Error> {
     let original_termios = Termios::from_fd(stdin)?;
+    enable_raw_mode(stdin, original_termios)?;
     let (screen_rows, screen_cols) = get_window_size(stdout)?;
     let editor_config = EditorConfig {
         original_termios,
@@ -261,7 +305,6 @@ fn init_editor(stdin: RawFd, stdout: RawFd) -> Result<EditorConfig, Error> {
         screen_rows,
         screen_cols,
     };
-    enable_raw_mode(stdin, editor_config.original_termios)?;
     Result::Ok(editor_config)
 }
 
