@@ -192,6 +192,41 @@ fn read_key(stdin: RawFd) -> Result<char, Error> {
     Result::Ok(c)
 }
 
+/// Uses DSR (Device Status Report) to get the cursor position
+///---
+/// if (write(STDOUT_FILENO, "\x1b[6n", 4) != 4) return -1;
+/// printf("\r\n");
+/// char c;
+/// while (read(STDIN_FILENO, &c, 1) == 1) {
+///   if (iscntrl(c)) {
+///     printf("%d\r\n", c);
+///   } else {
+///     printf("%d ('%c')\r\n", c, c);
+///   }
+/// }
+/// editorReadKey();
+/// return -1;
+fn get_cursor_position(stdin: RawFd, stdout: RawFd) -> Result<(u16, u16), Error> {
+    let dsr_active_position = b"\x1b[6n";
+    if 4 != write(stdout, dsr_active_position)? {
+        return simple_error!();
+    }
+
+    eprint!("\r\n");
+    let mut buffer = [0u8; 1];
+    // nix's `read` implementation reads as many bytes as the buffer passed in.
+    while 1 == read(stdin, &mut buffer)? {
+        let c = buffer[0] as char;
+        if c.is_control() {
+            eprint!("{:?}\r\n", buffer);
+        } else {
+            eprint!("{:?} ('{}')\r\n", buffer, c);
+        }
+    }
+    read_key(stdin)?;
+    simple_error!()
+}
+
 /// Tries to get the Terminal size through the `ioctl` TIOCGWINSZ. If this
 /// fails, tries to fetch the size by moving the cursor to arbitrary big values
 /// and reading the cursor position.
@@ -232,8 +267,7 @@ fn get_window_size(stdout: RawFd) -> Result<(u16, u16), Error> {
         // TODO Remove. Importing stdin here directly change across the
         // whole program
         let stdin = std::io::stdin().as_raw_fd();
-        read_key(stdin)?;
-        simple_error!()
+        get_cursor_position(stdin, stdout)
     } else {
         Result::Ok((ws.ws_row, ws.ws_col))
     }
