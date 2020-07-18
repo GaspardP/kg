@@ -192,18 +192,20 @@ fn read_key(stdin: RawFd) -> Result<char, Error> {
     Result::Ok(c)
 }
 
-/// Uses DSR (Device Status Report) to get the cursor position
+/// Uses DSR (Device Status Report) to get the cursor position. The sequence
+/// printed will be something like `^[[71;140R` which will be represented as
+/// `[27, 91, 55, 49, 59, 49, 52, 48, 82]` in a u8 array.
 ///---
+/// char buf[32];
+/// unsigned int i = 0;
 /// if (write(STDOUT_FILENO, "\x1b[6n", 4) != 4) return -1;
-/// printf("\r\n");
-/// char c;
-/// while (read(STDIN_FILENO, &c, 1) == 1) {
-///   if (iscntrl(c)) {
-///     printf("%d\r\n", c);
-///   } else {
-///     printf("%d ('%c')\r\n", c, c);
-///   }
+/// while (i < sizeof(buf) - 1) {
+///   if (read(STDIN_FILENO, &buf[i], 1) != 1) break;
+///   if (buf[i] == 'R') break;
+///   i++;
 /// }
+/// buf[i] = '\0';
+/// printf("\r\n&buf[1]: '%s'\r\n", &buf[1]);
 /// editorReadKey();
 /// return -1;
 fn get_cursor_position(stdin: RawFd, stdout: RawFd) -> Result<(u16, u16), Error> {
@@ -212,17 +214,32 @@ fn get_cursor_position(stdin: RawFd, stdout: RawFd) -> Result<(u16, u16), Error>
         return simple_error!();
     }
 
-    eprint!("\r\n");
-    let mut buffer = [0u8; 1];
-    // nix's `read` implementation reads as many bytes as the buffer passed in.
-    while 1 == read(stdin, &mut buffer)? {
-        let c = buffer[0] as char;
-        if c.is_control() {
-            eprint!("{:?}\r\n", buffer);
-        } else {
-            eprint!("{:?} ('{}')\r\n", buffer, c);
+    let mut buffer = [0u8; 32];
+    let mut i = 0;
+    loop {
+        // `read()` reads as much as the buffer so we need to provide a
+        // buffer of size 1
+        let mut buf = [0u8; 1];
+        let bytes_read = read(stdin, &mut buf)?;
+        // if we couldn't read enough bytes
+        if 1 != bytes_read {
+            return simple_error!();
         }
+        // save char
+        buffer[i] = buf[0];
+        // keep reading until we get to the 'R'
+        if b'R' == buf[0] {
+            break;
+        }
+        // or error out if the buffer was too small
+        if buffer.len() <= i {
+            return simple_error!();
+        }
+        i += 1;
     }
+    print!("\r\n&buffer[0..i]: '{:?}'\r\n", &buffer[0..i]);
+    let s = std::str::from_utf8(&buffer[0..i]).unwrap();
+    print!("\r\n&buffer[0..i]: {:?}\r\n", s);
     read_key(stdin)?;
     simple_error!()
 }
