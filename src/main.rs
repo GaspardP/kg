@@ -36,12 +36,19 @@ type Column = u32;
 enum Error {
     Io(std::io::Error),
     Nix(nix::Error),
+    ParseInt(std::num::ParseIntError),
     Simple(Line, Column),
 }
 
 macro_rules! simple_error {
     () => {
-        Result::Err(Error::Simple(line!(), column!()))
+        Error::Simple(line!(), column!())
+    };
+}
+
+macro_rules! simple_err {
+    () => {
+        Result::Err(simple_error!())
     };
 }
 
@@ -54,6 +61,12 @@ impl From<std::io::Error> for Error {
 impl From<nix::Error> for Error {
     fn from(error: nix::Error) -> Self {
         Error::Nix(error)
+    }
+}
+
+impl From<std::num::ParseIntError> for Error {
+    fn from(error: std::num::ParseIntError) -> Self {
+        Error::ParseInt(error)
     }
 }
 
@@ -173,25 +186,6 @@ fn editor_read_key(editor_config: &EditorConfig) -> Result<u8, Error> {
     Result::Ok(buffer[0])
 }
 
-// temp function to not have to pass the whole editor to the get_window_size
-// function
-fn read_key(stdin: RawFd) -> Result<char, Error> {
-    let mut buffer = [0u8; 1];
-    let bytes_read = read(stdin, &mut buffer)?;
-    let c = buffer[0] as char;
-
-    if c.is_control() {
-        eprint!("number of bytes read {:?}: {:?}\r\n", bytes_read, buffer);
-    } else {
-        eprint!(
-            "number of bytes read {:?}: {:?} ('{}')\r\n",
-            bytes_read, buffer, c
-        );
-    }
-
-    Result::Ok(c)
-}
-
 /// Uses DSR (Device Status Report) to get the cursor position. The sequence
 /// printed will be something like `^[[71;140R` which will be represented as
 /// `[27, 91, 55, 49, 59, 49, 52, 48, 82]` in a u8 array.
@@ -205,13 +199,13 @@ fn read_key(stdin: RawFd) -> Result<char, Error> {
 ///   i++;
 /// }
 /// buf[i] = '\0';
-/// printf("\r\n&buf[1]: '%s'\r\n", &buf[1]);
-/// editorReadKey();
-/// return -1;
+/// if (buf[0] != '\x1b' || buf[1] != '[') return -1;
+/// if (sscanf(&buf[2], "%d;%d", rows, cols) != 2) return -1;
+/// return 0;
 fn get_cursor_position(stdin: RawFd, stdout: RawFd) -> Result<(u16, u16), Error> {
     let dsr_active_position = b"\x1b[6n";
     if 4 != write(stdout, dsr_active_position)? {
-        return simple_error!();
+        return simple_err!();
     }
 
     let mut buffer = [0u8; 32];
@@ -223,7 +217,7 @@ fn get_cursor_position(stdin: RawFd, stdout: RawFd) -> Result<(u16, u16), Error>
         let bytes_read = read(stdin, &mut buf)?;
         // if we couldn't read enough bytes
         if 1 != bytes_read {
-            return simple_error!();
+            return simple_err!();
         }
         // save char
         buffer[i] = buf[0];
@@ -233,15 +227,29 @@ fn get_cursor_position(stdin: RawFd, stdout: RawFd) -> Result<(u16, u16), Error>
         }
         // or error out if the buffer was too small
         if buffer.len() <= i {
-            return simple_error!();
+            return simple_err!();
         }
         i += 1;
     }
-    print!("\r\n&buffer[0..i]: '{:?}'\r\n", &buffer[0..i]);
-    let s = std::str::from_utf8(&buffer[0..i]).unwrap();
-    print!("\r\n&buffer[0..i]: {:?}\r\n", s);
-    read_key(stdin)?;
-    simple_error!()
+    // Check the content of the buffer for the DSR result
+    if b'\x1b' != buffer[0] {
+        return simple_err!();
+    }
+    if b'[' != buffer[1] {
+        return simple_err!();
+    }
+    if b'R' != buffer[i] {
+        return simple_err!();
+    }
+
+    let mut iter = std::str::from_utf8(&buffer[2..i]).unwrap().split(';');
+    // `next()` returns an Option, `parse()` returns a `Result`. The
+    // iterator is expected to return 2 elements. `ok_or()` will convert the
+    // iterator's option to a `Result` with a `SimplerError` if the
+    // iteration failed.
+    let rows = iter.next().ok_or(simple_error!())?.parse::<u16>()?;
+    let cols = iter.next().ok_or(simple_error!())?.parse::<u16>()?;
+    Result::Ok((rows, cols))
 }
 
 /// Tries to get the Terminal size through the `ioctl` TIOCGWINSZ. If this
@@ -278,7 +286,7 @@ fn get_window_size(stdout: RawFd) -> Result<(u16, u16), Error> {
         // Cursor Forward 999, Cursor Down 999
         let bytes_written = write(stdout, b"\x1b[999C\x1b[999B")?;
         if 12 != bytes_written {
-            return simple_error!();
+            return simple_err!();
         }
 
         // TODO Remove. Importing stdin here directly change across the
