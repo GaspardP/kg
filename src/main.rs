@@ -445,27 +445,40 @@ fn editor_refresh_screen(editor_config: &EditorConfig) -> Result<(), Error> {
 
 /// switch (key) {
 ///   case ARROW_LEFT:
-///     E.cx--;
+///     if (E.cx != 0) {
+///       E.cx--;
+///     }
 ///     break;
 ///   case ARROW_RIGHT:
-///     E.cx++;
+///     if (E.cx != E.screencols - 1) {
+///       E.cx++;
+///     }
 ///     break;
 ///   case ARROW_UP:
-///     E.cy--;
+///     if (E.cy != 0) {
+///       E.cy--;
+///     }
 ///     break;
 ///   case ARROW_DOWN:
-///     E.cy++;
+///     if (E.cy != E.screenrows - 1) {
+///       E.cy++;
+///     }
 ///     break;
 /// }
 fn editor_move_cursor(editor_config: &mut EditorConfig, direction: &Direction) {
     use Direction::{Down, Left, Right, Up};
     let (cx, cy) = editor_config.cursor;
+    let max_x = editor_config.screen_cols - 1;
+    let max_y = editor_config.screen_rows - 1;
+
     let cursor = match direction {
-        Down => (cx, cy + 1),
-        Up => (cx, cy - 1),
-        Right => (cx + 1, cy),
-        Left => (cx - 1, cy),
+        Down if cy < max_y => (cx, cy + 1),
+        Up if 0 < cy => (cx, cy - 1),
+        Right if cx < max_x => (cx + 1, cy),
+        Left if 0 < cx => (cx - 1, cy),
+        _ => (cx, cy),
     };
+
     editor_config.cursor = cursor;
 }
 
