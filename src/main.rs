@@ -265,9 +265,8 @@ fn get_cursor_position(stdin: RawFd, stdout: RawFd) -> Result<(u16, u16), Error>
 ///   *rows = ws.ws_row;
 ///   return 0;
 /// }
-fn get_window_size(stdout: RawFd) -> Result<(u16, u16), Error> {
+fn get_window_size(stdin: RawFd, stdout: RawFd) -> Result<(u16, u16), Error> {
     use nix::libc::{ioctl, winsize, TIOCGWINSZ};
-    use std::os::unix::io::AsRawFd;
 
     let res;
     let mut ws = winsize {
@@ -281,17 +280,13 @@ fn get_window_size(stdout: RawFd) -> Result<(u16, u16), Error> {
         res = ioctl(stdout, TIOCGWINSZ, &mut ws);
     }
 
-    // TODO Remove this when the implementation is fixed
-    if true || res == -1 || ws.ws_col == 0 {
+    if res == -1 || ws.ws_col == 0 {
         // Cursor Forward 999, Cursor Down 999
         let bytes_written = write(stdout, b"\x1b[999C\x1b[999B")?;
         if 12 != bytes_written {
             return simple_err!();
         }
 
-        // TODO Remove. Importing stdin here directly change across the
-        // whole program
-        let stdin = std::io::stdin().as_raw_fd();
         get_cursor_position(stdin, stdout)
     } else {
         Result::Ok((ws.ws_row, ws.ws_col))
@@ -356,7 +351,7 @@ fn editor_process_keypress(editor_config: &EditorConfig) -> Result<Event, Error>
 fn init_editor(stdin: RawFd, stdout: RawFd) -> Result<EditorConfig, Error> {
     let original_termios = Termios::from_fd(stdin)?;
     enable_raw_mode(stdin, original_termios)?;
-    let (screen_rows, screen_cols) = get_window_size(stdout)?;
+    let (screen_rows, screen_cols) = get_window_size(stdin, stdout)?;
     let editor_config = EditorConfig {
         original_termios,
         stdin,
