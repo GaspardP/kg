@@ -36,6 +36,8 @@ enum Key {
     Arrow(Direction),
     Char(u8),
     Ctrl(u8),
+    End,
+    Home,
     Page(Direction),
 }
 
@@ -200,8 +202,12 @@ fn disable_raw_mode(fd: RawFd, original: Termios) -> Result<(), std::io::Error> 
 ///       if (read(STDIN_FILENO, &seq[2], 1) != 1) return '\x1b';
 ///       if (seq[2] == '~') {
 ///         switch (seq[1]) {
+///           case '1': return HOME_KEY;
+///           case '4': return END_KEY;
 ///           case '5': return PAGE_UP;
 ///           case '6': return PAGE_DOWN;
+///           case '7': return HOME_KEY;
+///           case '8': return END_KEY;
 ///         }
 ///       }
 ///     } else {
@@ -210,7 +216,14 @@ fn disable_raw_mode(fd: RawFd, original: Termios) -> Result<(), std::io::Error> 
 ///         case 'B': return ARROW_DOWN;
 ///         case 'C': return ARROW_RIGHT;
 ///         case 'D': return ARROW_LEFT;
+///         case 'H': return HOME_KEY;
+///         case 'F': return END_KEY;
 ///       }
+///     }
+///   } else if (seq[0] == 'O') {
+///     switch (seq[1]) {
+///       case 'H': return HOME_KEY;
+///       case 'F': return END_KEY;
 ///     }
 ///   }
 ///
@@ -235,11 +248,23 @@ fn editor_read_key(editor_config: &EditorConfig) -> Result<Key, Error> {
             return Result::Ok(Key::Char(c));
         }
 
+        #[allow(clippy::match_same_arms)]
         match seq {
             [b'[', b'A', _] => Key::Arrow(Direction::Up),
             [b'[', b'B', _] => Key::Arrow(Direction::Down),
             [b'[', b'C', _] => Key::Arrow(Direction::Right),
             [b'[', b'D', _] => Key::Arrow(Direction::Left),
+            // End: `<esc>[F`, `<esc>OF`, `<esc>[4~`, `<esc>[8~`
+            [b'[', b'F', _] => Key::End,
+            [b'[', b'O', b'F'] => Key::End,
+            [b'[', b'4', b'~'] => Key::End,
+            [b'[', b'8', b'~'] => Key::End,
+            // Home: `<esc>[H`, `<esc>OH`, `<esc>[1~` or `<esc>[7~`
+            [b'[', b'H', _] => Key::Home,
+            [b'[', b'O', b'H'] => Key::Home,
+            [b'[', b'1', b'~'] => Key::Home,
+            [b'[', b'7', b'~'] => Key::Home,
+            // Page Up/Down
             [b'[', b'5', b'~'] => Key::Page(Direction::Up),
             [b'[', b'6', b'~'] => Key::Page(Direction::Down),
             _ => Key::Char(c),
@@ -510,6 +535,13 @@ fn editor_move_cursor(editor_config: &mut EditorConfig, direction: &Direction, t
 ///     exit(0);
 ///     break;
 ///
+///   case HOME_KEY:
+///     E.cx = 0;
+///     break;
+///   case END_KEY:
+///     E.cx = E.screencols - 1;
+///     break;
+///
 ///   case PAGE_UP:
 ///   case PAGE_DOWN:
 ///     {
@@ -527,10 +559,13 @@ fn editor_move_cursor(editor_config: &mut EditorConfig, direction: &Direction, t
 ///     break;
 /// }
 fn editor_process_keypress(editor_config: &EditorConfig) -> Result<Event, Error> {
+    let cols = editor_config.screen_cols;
     let rows = editor_config.screen_rows;
     let result = match editor_read_key(editor_config)? {
         Key::Arrow(direction) => Event::CursorMove(direction, 1),
         Key::Ctrl(b'q') => Event::Quit,
+        Key::End => Event::CursorMove(Direction::Right, cols),
+        Key::Home => Event::CursorMove(Direction::Left, cols),
         Key::Page(direction) => Event::CursorMove(direction, rows),
         _ => Event::None,
     };
