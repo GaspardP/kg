@@ -16,13 +16,18 @@ use termios::{
 const PKG_NAME: &str = env!("CARGO_PKG_NAME");
 const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Bitwise-AND with `00011111` or `0x1f` to set the upper 3 bits characters to
-/// `0`. By convention the terminal strips bits 5 and 6 of the key pressed
-/// together with `Ctrl`.
-///---
-/// #define CTRL_KEY(k) ((k) & 0x1f)
-fn ctrl_key(c: u8) -> u8 {
-    c & 0x1f
+mod key {
+
+    /// Bitwise-AND with `00011111` or `0x1f` to set the upper 3 bits characters to
+    /// `0`. By convention the terminal strips bits 5 and 6 of the key pressed
+    /// together with `Ctrl`.
+    ///---
+    /// #define CTRL_KEY(k) ((k) & 0x1f)
+    const fn ctrl_key(c: u8) -> u8 {
+        c & 0x1f
+    }
+
+    pub const CTRL_Q: u8 = ctrl_key(b'q');
 }
 
 const CLEAR_LINE: &[u8; 3] = b"\x1b[K";
@@ -77,8 +82,9 @@ impl From<std::num::ParseIntError> for Error {
 }
 
 enum Event {
-    Quit,
+    CursorMove(u8),
     None,
+    Quit,
 }
 
 #[allow(dead_code)]
@@ -399,18 +405,53 @@ fn editor_refresh_screen(editor_config: &EditorConfig) -> Result<(), Error> {
 
 /*** input ***/
 
+/// switch (key) {
+///   case 'a':
+///     E.cx--;
+///     break;
+///   case 'd':
+///     E.cx++;
+///     break;
+///   case 'w':
+///     E.cy--;
+///     break;
+///   case 's':
+///     E.cy++;
+///     break;
+/// }
+fn editor_move_cursor(editor_config: &mut EditorConfig, c: u8) {
+    let (cx, cy) = editor_config.cursor;
+    let cursor = match c {
+        b'd' => (cx, cy + 1),
+        b'e' => (cx, cy - 1),
+        b'f' => (cx + 1, cy),
+        b's' => (cx - 1, cy),
+        _ => (cx, cy),
+    };
+    editor_config.cursor = cursor;
+}
+
 /// char c = editorReadKey();
 /// switch (c) {
 ///   case CTRL_KEY('q'):
 ///     exit(0);
 ///     break;
+///
+///   case 'w':
+///   case 's':
+///   case 'a':
+///   case 'd':
+///     editorMoveCursor(c);
+///     break;
 /// }
 fn editor_process_keypress(editor_config: &EditorConfig) -> Result<Event, Error> {
-    let result = if editor_read_key(editor_config)? == ctrl_key(b'q') {
-        eprint!("no more input, exiting\r\n");
-        Event::Quit
-    } else {
-        Event::None
+    let result = match editor_read_key(editor_config)? {
+        key::CTRL_Q => {
+            eprint!("no more input, exiting\r\n");
+            Event::Quit
+        }
+        c @ (b'd' | b'e' | b'f' | b's') => Event::CursorMove(c),
+        _ => Event::None,
     };
     Result::Ok(result)
 }
@@ -437,12 +478,13 @@ fn main() -> Result<(), Error> {
     use std::os::unix::io::AsRawFd;
     let stdin: RawFd = std::io::stdin().as_raw_fd();
     let stdout: RawFd = std::io::stdout().as_raw_fd();
-    let editor_config = init_editor(stdin, stdout)?;
+    let mut editor_config = init_editor(stdin, stdout)?;
 
     loop {
         editor_refresh_screen(&editor_config)?;
         match editor_process_keypress(&editor_config)? {
             Event::Quit => break,
+            Event::CursorMove(c) => editor_move_cursor(&mut editor_config, c),
             Event::None => continue,
         }
     }
