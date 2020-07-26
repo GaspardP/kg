@@ -22,6 +22,7 @@ The project depends on:
 
 - `Ctrl+q` to quit
 - the arrow keys to move the cursor
+- `PgUp` and `PgDn` to move the cursor to the top or bottom of the screen
 
 ```bash
 # Build the application
