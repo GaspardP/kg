@@ -181,7 +181,22 @@ fn disable_raw_mode(fd: RawFd, original: Termios) -> Result<(), std::io::Error> 
 /// while ((nread = read(STDIN_FILENO, &c, 1)) != 1) {
 ///   if (nread == -1 && errno != EAGAIN) die("read");
 /// }
-/// return c;
+/// if (c == '\x1b') {
+///   char seq[3];
+///   if (read(STDIN_FILENO, &seq[0], 1) != 1) return '\x1b';
+///   if (read(STDIN_FILENO, &seq[1], 1) != 1) return '\x1b';
+///   if (seq[0] == '[') {
+///     switch (seq[1]) {
+///       case 'A': return 'w';
+///       case 'B': return 's';
+///       case 'C': return 'd';
+///       case 'D': return 'a';
+///     }
+///   }
+///   return '\x1b';
+/// } else {
+///   return c;
+/// }
 fn editor_read_key(editor_config: &EditorConfig) -> Result<u8, Error> {
     let stdin = editor_config.stdin;
     let mut buffer = [0u8; 1];
@@ -189,14 +204,27 @@ fn editor_read_key(editor_config: &EditorConfig) -> Result<u8, Error> {
     // buffer passed in.
     while 1 != read(stdin, &mut buffer)? {}
 
-    let c = buffer[0] as char;
-    if c.is_control() {
-        eprint!("read: {:?}\r\n", buffer);
-    } else {
-        eprint!("read: {:?} ('{}')\r\n", buffer, c);
-    }
+    let c = buffer[0];
+    let result = if b'\x1b' == c {
+        // Some escape sequences are 2 bytes long (like arrow keys), others are
+        // 3 (like page up/down).
+        let mut seq = [0u8; 2];
+        if 2 != read(stdin, &mut seq)? {
+            return Result::Ok(c);
+        }
 
-    Result::Ok(buffer[0])
+        match seq {
+            [b'[', b'A'] => b'e',
+            [b'[', b'B'] => b'd',
+            [b'[', b'C'] => b'f',
+            [b'[', b'D'] => b's',
+            _ => c,
+        }
+    } else {
+        c
+    };
+
+    Result::Ok(result)
 }
 
 /// Uses DSR (Device Status Report) to get the cursor position. The sequence

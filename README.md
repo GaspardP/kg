@@ -21,7 +21,7 @@ The project depends on:
 ## Usage
 
 - `Ctrl+q` to quit
-- `e`, `s`, `d`, `f` to move the cursor
+- `e`, `s`, `d`, `f` or the arrow keys to move the cursor
 
 ```bash
 # Build the application
