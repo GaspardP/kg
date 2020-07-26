@@ -22,6 +22,7 @@ fn ctrl_key(c: u8) -> u8 {
     c & 0x1f
 }
 
+const CLEAR_LINE: &[u8; 3] = b"\x1b[K";
 const CLEAR_SCREEN: &[u8; 4] = b"\x1b[2J";
 const CURSOR_HOME: &[u8; 3] = b"\x1b[H";
 const HIDE_CURSOR: &[u8; 6] = b"\x1b[?25l";
@@ -302,15 +303,19 @@ fn get_window_size(stdin: RawFd, stdout: RawFd) -> Result<(u16, u16), Error> {
 ///  int y;
 ///  for (y = 0; y < E.screenrows; y++) {
 ///    abAppend(ab, "~", 1);
+///    abAppend(ab, "\x1b[K", 3);
 ///    if (y < E.screenrows - 1) {
 ///      abAppend(ab, "\r\n", 2);
 ///    }
 ///  }
 fn editor_draw_rows(editor_config: &EditorConfig, ab: &mut Vec<u8>) {
     for _ in 0..(editor_config.screen_rows - 1) {
-        ab.extend(b"~\r\n");
+        ab.extend(b"~");
+        ab.extend(CLEAR_LINE);
+        ab.extend(b"\r\n");
     }
     ab.extend(b"~");
+    ab.extend(CLEAR_LINE);
 }
 
 /// Writes the "ED" escape sequence (clear screen [1]) to the terminal. `\x1b`
@@ -320,7 +325,6 @@ fn editor_draw_rows(editor_config: &EditorConfig, ab: &mut Vec<u8>) {
 /// ---
 /// struct abuf ab = ABUF_INIT;
 /// abAppend(&ab, "\x1b[?25l", 6);
-/// abAppend(&ab, "\x1b[2J", 4);
 /// abAppend(&ab, "\x1b[H", 3);
 /// editorDrawRows(&ab);
 /// abAppend(&ab, "\x1b[H", 3);
@@ -331,7 +335,6 @@ fn editor_refresh_screen(editor_config: &EditorConfig) -> Result<(), Error> {
     let stdout = editor_config.stdout;
     let mut ab = Vec::<u8>::with_capacity(22);
     ab.extend(HIDE_CURSOR);
-    ab.extend(CLEAR_SCREEN);
     ab.extend(CURSOR_HOME);
     editor_draw_rows(editor_config, &mut ab);
     ab.extend(CURSOR_HOME);
