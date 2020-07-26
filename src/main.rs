@@ -28,6 +28,11 @@ mod key {
     }
 
     pub const CTRL_Q: u8 = ctrl_key(b'q');
+
+    pub const ARROW_DOWN: u8 = b'd';
+    pub const ARROW_LEFT: u8 = b's';
+    pub const ARROW_RIGHT: u8 = b'f';
+    pub const ARROW_UP: u8 = b'e';
 }
 
 const CLEAR_LINE: &[u8; 3] = b"\x1b[K";
@@ -187,10 +192,10 @@ fn disable_raw_mode(fd: RawFd, original: Termios) -> Result<(), std::io::Error> 
 ///   if (read(STDIN_FILENO, &seq[1], 1) != 1) return '\x1b';
 ///   if (seq[0] == '[') {
 ///     switch (seq[1]) {
-///       case 'A': return 'w';
-///       case 'B': return 's';
-///       case 'C': return 'd';
-///       case 'D': return 'a';
+///       case 'A': return ARROW_UP;
+///       case 'B': return ARROW_DOWN;
+///       case 'C': return ARROW_RIGHT;
+///       case 'D': return ARROW_LEFT;
 ///     }
 ///   }
 ///   return '\x1b';
@@ -214,10 +219,10 @@ fn editor_read_key(editor_config: &EditorConfig) -> Result<u8, Error> {
         }
 
         match seq {
-            [b'[', b'A'] => b'e',
-            [b'[', b'B'] => b'd',
-            [b'[', b'C'] => b'f',
-            [b'[', b'D'] => b's',
+            [b'[', b'A'] => key::ARROW_UP,
+            [b'[', b'B'] => key::ARROW_DOWN,
+            [b'[', b'C'] => key::ARROW_RIGHT,
+            [b'[', b'D'] => key::ARROW_LEFT,
             _ => c,
         }
     } else {
@@ -434,26 +439,27 @@ fn editor_refresh_screen(editor_config: &EditorConfig) -> Result<(), Error> {
 /*** input ***/
 
 /// switch (key) {
-///   case 'a':
+///   case ARROW_LEFT:
 ///     E.cx--;
 ///     break;
-///   case 'd':
+///   case ARROW_RIGHT:
 ///     E.cx++;
 ///     break;
-///   case 'w':
+///   case ARROW_UP:
 ///     E.cy--;
 ///     break;
-///   case 's':
+///   case ARROW_DOWN:
 ///     E.cy++;
 ///     break;
 /// }
 fn editor_move_cursor(editor_config: &mut EditorConfig, c: u8) {
+    use key::{ARROW_DOWN, ARROW_LEFT, ARROW_RIGHT, ARROW_UP};
     let (cx, cy) = editor_config.cursor;
     let cursor = match c {
-        b'd' => (cx, cy + 1),
-        b'e' => (cx, cy - 1),
-        b'f' => (cx + 1, cy),
-        b's' => (cx - 1, cy),
+        ARROW_DOWN => (cx, cy + 1),
+        ARROW_UP => (cx, cy - 1),
+        ARROW_RIGHT => (cx + 1, cy),
+        ARROW_LEFT => (cx - 1, cy),
         _ => (cx, cy),
     };
     editor_config.cursor = cursor;
@@ -465,20 +471,21 @@ fn editor_move_cursor(editor_config: &mut EditorConfig, c: u8) {
 ///     exit(0);
 ///     break;
 ///
-///   case 'w':
-///   case 's':
-///   case 'a':
-///   case 'd':
+///   case ARROW_UP:
+///   case ARROW_DOWN:
+///   case ARROW_LEFT:
+///   case ARROW_RIGHT:
 ///     editorMoveCursor(c);
 ///     break;
 /// }
 fn editor_process_keypress(editor_config: &EditorConfig) -> Result<Event, Error> {
+    use key::{ARROW_DOWN, ARROW_LEFT, ARROW_RIGHT, ARROW_UP, CTRL_Q};
     let result = match editor_read_key(editor_config)? {
-        key::CTRL_Q => {
+        CTRL_Q => {
             eprint!("no more input, exiting\r\n");
             Event::Quit
         }
-        c @ (b'd' | b'e' | b'f' | b's') => Event::CursorMove(c),
+        c @ (ARROW_DOWN | ARROW_UP | ARROW_RIGHT | ARROW_LEFT) => Event::CursorMove(c),
         _ => Event::None,
     };
     Result::Ok(result)
