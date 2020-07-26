@@ -36,6 +36,7 @@ enum Key {
     Arrow(Direction),
     Char(u8),
     Ctrl(u8),
+    Delete,
     End,
     Home,
     Page(Direction),
@@ -203,6 +204,7 @@ fn disable_raw_mode(fd: RawFd, original: Termios) -> Result<(), std::io::Error> 
 ///       if (seq[2] == '~') {
 ///         switch (seq[1]) {
 ///           case '1': return HOME_KEY;
+///           case '3': return DEL_KEY;
 ///           case '4': return END_KEY;
 ///           case '5': return PAGE_UP;
 ///           case '6': return PAGE_DOWN;
@@ -254,6 +256,7 @@ fn editor_read_key(editor_config: &EditorConfig) -> Result<Key, Error> {
             [b'[', b'B', _] => Key::Arrow(Direction::Down),
             [b'[', b'C', _] => Key::Arrow(Direction::Right),
             [b'[', b'D', _] => Key::Arrow(Direction::Left),
+            [b'[', b'3', b'~'] => Key::Delete,
             // End: `<esc>[F`, `<esc>OF`, `<esc>[4~`, `<esc>[8~`
             [b'[', b'F', _] => Key::End,
             [b'[', b'O', b'F'] => Key::End,
