@@ -28,11 +28,18 @@ mod key {
     }
 
     pub const CTRL_Q: u8 = ctrl_key(b'q');
+}
 
-    pub const ARROW_DOWN: u8 = b'd';
-    pub const ARROW_LEFT: u8 = b's';
-    pub const ARROW_RIGHT: u8 = b'f';
-    pub const ARROW_UP: u8 = b'e';
+enum Direction {
+    Down,
+    Left,
+    Right,
+    Up,
+}
+
+enum Key {
+    Arrow(Direction),
+    Char(u8),
 }
 
 const CLEAR_LINE: &[u8; 3] = b"\x1b[K";
@@ -87,7 +94,7 @@ impl From<std::num::ParseIntError> for Error {
 }
 
 enum Event {
-    CursorMove(u8),
+    CursorMove(Direction),
     None,
     Quit,
 }
@@ -202,7 +209,7 @@ fn disable_raw_mode(fd: RawFd, original: Termios) -> Result<(), std::io::Error> 
 /// } else {
 ///   return c;
 /// }
-fn editor_read_key(editor_config: &EditorConfig) -> Result<u8, Error> {
+fn editor_read_key(editor_config: &EditorConfig) -> Result<Key, Error> {
     let stdin = editor_config.stdin;
     let mut buffer = [0u8; 1];
     // nix's `read` implementation reads a maximum of as many bytes as the
@@ -210,26 +217,26 @@ fn editor_read_key(editor_config: &EditorConfig) -> Result<u8, Error> {
     while 1 != read(stdin, &mut buffer)? {}
 
     let c = buffer[0];
-    let result = if b'\x1b' == c {
+    let key = if b'\x1b' == c {
         // Some escape sequences are 2 bytes long (like arrow keys), others are
         // 3 (like page up/down).
         let mut seq = [0u8; 2];
         if 2 != read(stdin, &mut seq)? {
-            return Result::Ok(c);
+            return Result::Ok(Key::Char(c));
         }
 
         match seq {
-            [b'[', b'A'] => key::ARROW_UP,
-            [b'[', b'B'] => key::ARROW_DOWN,
-            [b'[', b'C'] => key::ARROW_RIGHT,
-            [b'[', b'D'] => key::ARROW_LEFT,
-            _ => c,
+            [b'[', b'A'] => Key::Arrow(Direction::Up),
+            [b'[', b'B'] => Key::Arrow(Direction::Down),
+            [b'[', b'C'] => Key::Arrow(Direction::Right),
+            [b'[', b'D'] => Key::Arrow(Direction::Left),
+            _ => Key::Char(c),
         }
     } else {
-        c
+        Key::Char(c)
     };
 
-    Result::Ok(result)
+    Result::Ok(key)
 }
 
 /// Uses DSR (Device Status Report) to get the cursor position. The sequence
@@ -452,15 +459,14 @@ fn editor_refresh_screen(editor_config: &EditorConfig) -> Result<(), Error> {
 ///     E.cy++;
 ///     break;
 /// }
-fn editor_move_cursor(editor_config: &mut EditorConfig, c: u8) {
-    use key::{ARROW_DOWN, ARROW_LEFT, ARROW_RIGHT, ARROW_UP};
+fn editor_move_cursor(editor_config: &mut EditorConfig, direction: &Direction) {
+    use Direction::{Down, Left, Right, Up};
     let (cx, cy) = editor_config.cursor;
-    let cursor = match c {
-        ARROW_DOWN => (cx, cy + 1),
-        ARROW_UP => (cx, cy - 1),
-        ARROW_RIGHT => (cx + 1, cy),
-        ARROW_LEFT => (cx - 1, cy),
-        _ => (cx, cy),
+    let cursor = match direction {
+        Down => (cx, cy + 1),
+        Up => (cx, cy - 1),
+        Right => (cx + 1, cy),
+        Left => (cx - 1, cy),
     };
     editor_config.cursor = cursor;
 }
@@ -479,13 +485,12 @@ fn editor_move_cursor(editor_config: &mut EditorConfig, c: u8) {
 ///     break;
 /// }
 fn editor_process_keypress(editor_config: &EditorConfig) -> Result<Event, Error> {
-    use key::{ARROW_DOWN, ARROW_LEFT, ARROW_RIGHT, ARROW_UP, CTRL_Q};
     let result = match editor_read_key(editor_config)? {
-        CTRL_Q => {
+        Key::Char(key::CTRL_Q) => {
             eprint!("no more input, exiting\r\n");
             Event::Quit
         }
-        c @ (ARROW_DOWN | ARROW_UP | ARROW_RIGHT | ARROW_LEFT) => Event::CursorMove(c),
+        Key::Arrow(direction) => Event::CursorMove(direction),
         _ => Event::None,
     };
     Result::Ok(result)
@@ -519,7 +524,7 @@ fn main() -> Result<(), Error> {
         editor_refresh_screen(&editor_config)?;
         match editor_process_keypress(&editor_config)? {
             Event::Quit => break,
-            Event::CursorMove(c) => editor_move_cursor(&mut editor_config, c),
+            Event::CursorMove(direction) => editor_move_cursor(&mut editor_config, &direction),
             Event::None => continue,
         }
     }
