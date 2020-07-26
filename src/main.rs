@@ -16,18 +16,12 @@ use termios::{
 const PKG_NAME: &str = env!("CARGO_PKG_NAME");
 const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-mod key {
+const CTRL_MASK: u8 = 0x60;
 
-    /// Bitwise-AND with `00011111` or `0x1f` to set the upper 3 bits characters to
-    /// `0`. By convention the terminal strips bits 5 and 6 of the key pressed
-    /// together with `Ctrl`.
-    ///---
-    /// #define CTRL_KEY(k) ((k) & 0x1f)
-    const fn ctrl_key(c: u8) -> u8 {
-        c & 0x1f
-    }
-
-    pub const CTRL_Q: u8 = ctrl_key(b'q');
+/// Ctrl-chars are marked by their bits 5 and 6 set to `0`. Using a Bitwise-AND
+/// with `0x60` will return `0x00` for such chars.
+const fn is_ctrl(c: u8) -> bool {
+    0x00 == c & CTRL_MASK
 }
 
 enum Direction {
@@ -40,6 +34,7 @@ enum Direction {
 enum Key {
     Arrow(Direction),
     Char(u8),
+    Ctrl(u8),
 }
 
 const CLEAR_LINE: &[u8; 3] = b"\x1b[K";
@@ -232,6 +227,9 @@ fn editor_read_key(editor_config: &EditorConfig) -> Result<Key, Error> {
             [b'[', b'D'] => Key::Arrow(Direction::Left),
             _ => Key::Char(c),
         }
+    } else if is_ctrl(c) {
+        // Get the char out of the value to make it easier to match
+        Key::Ctrl(c | CTRL_MASK)
     } else {
         Key::Char(c)
     };
@@ -486,11 +484,8 @@ fn editor_move_cursor(editor_config: &mut EditorConfig, direction: &Direction) {
 /// }
 fn editor_process_keypress(editor_config: &EditorConfig) -> Result<Event, Error> {
     let result = match editor_read_key(editor_config)? {
-        Key::Char(key::CTRL_Q) => {
-            eprint!("no more input, exiting\r\n");
-            Event::Quit
-        }
         Key::Arrow(direction) => Event::CursorMove(direction),
+        Key::Ctrl(b'q') => Event::Quit,
         _ => Event::None,
     };
     Result::Ok(result)
