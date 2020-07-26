@@ -310,6 +310,12 @@ fn get_window_size(stdin: RawFd, stdout: RawFd) -> Result<(u16, u16), Error> {
 ///      int welcomelen = snprintf(welcome, sizeof(welcome),
 ///        "Kilo editor -- version %s", KILO_VERSION);
 ///      if (welcomelen > E.screencols) welcomelen = E.screencols;
+///      int padding = (E.screencols - welcomelen) / 2;
+///      if (padding) {
+///        abAppend(ab, "~", 1);
+///        padding--;
+///      }
+///      while (padding--) abAppend(ab, " ", 1);
 ///      abAppend(ab, welcome, welcomelen);
 ///    } else {
 ///      abAppend(ab, "~", 1);
@@ -321,13 +327,29 @@ fn get_window_size(stdin: RawFd, stdout: RawFd) -> Result<(u16, u16), Error> {
 ///    }
 ///  }
 fn editor_draw_rows(editor_config: &EditorConfig, ab: &mut Vec<u8>) {
+    use std::cmp::{min, Ordering};
     let screen_rows = editor_config.screen_rows;
     let screen_cols = editor_config.screen_cols as usize;
 
     for y in 0..(screen_rows - 1) {
         if y == screen_rows / 3 {
             let welcome = format!("{} editor -- version {}", PKG_NAME, PKG_VERSION);
-            let truncate = std::cmp::min(welcome.len(), screen_cols);
+            let truncate = min(welcome.len(), screen_cols);
+
+            let padding = (screen_cols - truncate) / 2;
+            match padding.cmp(&1) {
+                // No space to do padding
+                Ordering::Less => (),
+                // Only enough space for the initial tilda
+                Ordering::Equal => ab.extend(b"~"),
+                // Enough space for the tilda and some spaces
+                Ordering::Greater => {
+                    let mut left_padding = vec![b' '; padding - 1];
+                    ab.extend(b"~");
+                    ab.append(&mut left_padding);
+                }
+            }
+
             ab.extend(&welcome.as_bytes()[..truncate]);
         } else {
             ab.extend(b"~");
