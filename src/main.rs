@@ -297,20 +297,18 @@ fn get_window_size(stdin: RawFd, stdout: RawFd) -> Result<(u16, u16), Error> {
 
 /// Draws a vertical column of 24 `~`
 /// ---
-/// int y;
-/// for (y = 0; y < E.screenrows; y++) {
-///    write(STDOUT_FILENO, "~", 1);
+///  int y;
+///  for (y = 0; y < E.screenrows; y++) {
+///    abAppend(ab, "~", 1);
 ///    if (y < E.screenrows - 1) {
-///      write(STDOUT_FILENO, "\r\n", 2);
+///      abAppend(ab, "\r\n", 2);
 ///    }
-/// }
-fn editor_draw_rows(editor_config: &EditorConfig) -> Result<(), Error> {
-    let stdout = editor_config.stdout;
+///  }
+fn editor_draw_rows(editor_config: &EditorConfig, ab: &mut Vec<u8>) {
     for _ in 0..(editor_config.screen_rows - 1) {
-        write(stdout, b"~\r\n")?;
+        ab.extend(b"~\r\n");
     }
-    write(stdout, b"~")?;
-    Result::Ok(())
+    ab.extend(b"~");
 }
 
 /// Writes the "ED" escape sequence (clear screen [1]) to the terminal. `\x1b`
@@ -318,16 +316,22 @@ fn editor_draw_rows(editor_config: &EditorConfig) -> Result<(), Error> {
 ///
 /// [1] https://vt100.net/docs/vt100-ug/chapter3.html#ED
 /// ---
-/// write(STDOUT_FILENO, "\x1b[2J", 4);
-/// write(STDOUT_FILENO, "\x1b[H", 3);
-/// editorDrawRows();
-/// write(STDOUT_FILENO, "\x1b[H", 3);
+/// struct abuf ab = ABUF_INIT;
+/// abAppend(&ab, "\x1b[2J", 4);
+/// abAppend(&ab, "\x1b[H", 3);
+/// editorDrawRows(&ab);
+/// abAppend(&ab, "\x1b[H", 3);
+/// write(STDOUT_FILENO, ab.b, ab.len);
+/// abFree(&ab);
 fn editor_refresh_screen(editor_config: &EditorConfig) -> Result<(), Error> {
     let stdout = editor_config.stdout;
-    write(stdout, CLEAR_SCREEN)?;
-    write(stdout, CURSOR_HOME)?;
-    editor_draw_rows(editor_config)?;
-    write(stdout, CURSOR_HOME)?;
+    let mut ab = Vec::<u8>::with_capacity(10);
+    ab.extend(CLEAR_SCREEN);
+    ab.extend(CURSOR_HOME);
+    editor_draw_rows(editor_config, &mut ab);
+    ab.extend(CURSOR_HOME);
+
+    write(stdout, &ab)?;
     Result::Ok(())
 }
 
