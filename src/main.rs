@@ -83,6 +83,7 @@ enum Event {
 
 #[allow(dead_code)]
 struct EditorConfig {
+    cursor: (u16, u16),
     original_termios: Termios,
     stdin: RawFd,
     stdout: RawFd,
@@ -371,7 +372,9 @@ fn editor_draw_rows(editor_config: &EditorConfig, ab: &mut Vec<u8>) {
 /// abAppend(&ab, "\x1b[?25l", 6);
 /// abAppend(&ab, "\x1b[H", 3);
 /// editorDrawRows(&ab);
-/// abAppend(&ab, "\x1b[H", 3);
+/// char buf[32];
+/// snprintf(buf, sizeof(buf), "\x1b[%d;%dH", E.cy + 1, E.cx + 1);
+/// abAppend(&ab, buf, strlen(buf));
 /// abAppend(&ab, "\x1b[?25h", 6);
 /// write(STDOUT_FILENO, ab.b, ab.len);
 /// abFree(&ab);
@@ -381,7 +384,13 @@ fn editor_refresh_screen(editor_config: &EditorConfig) -> Result<(), Error> {
     ab.extend(HIDE_CURSOR);
     ab.extend(CURSOR_HOME);
     editor_draw_rows(editor_config, &mut ab);
-    ab.extend(CURSOR_HOME);
+
+    let (cx, cy) = editor_config.cursor;
+    // The cursor escape sequence is 1-indexed. The code sequence parameters are
+    // (rows, cols) which means (cy, cx)
+    let move_cursor = format!("\x1b[{};{}H", cy + 1, cx + 1);
+    ab.extend(move_cursor.as_bytes());
+
     ab.extend(SHOW_CURSOR);
 
     write(stdout, &ab)?;
@@ -414,6 +423,7 @@ fn init_editor(stdin: RawFd, stdout: RawFd) -> Result<EditorConfig, Error> {
     enable_raw_mode(stdin, original_termios)?;
     let (screen_rows, screen_cols) = get_window_size(stdin, stdout)?;
     let editor_config = EditorConfig {
+        cursor: (0, 0),
         original_termios,
         stdin,
         stdout,
