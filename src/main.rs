@@ -13,6 +13,9 @@ use termios::{
 
 /*** define ***/
 
+const PKG_NAME: &str = env!("CARGO_PKG_NAME");
+const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 /// Bitwise-AND with `00011111` or `0x1f` to set the upper 3 bits characters to
 /// `0`. By convention the terminal strips bits 5 and 6 of the key pressed
 /// together with `Ctrl`.
@@ -302,15 +305,34 @@ fn get_window_size(stdin: RawFd, stdout: RawFd) -> Result<(u16, u16), Error> {
 /// ---
 ///  int y;
 ///  for (y = 0; y < E.screenrows; y++) {
-///    abAppend(ab, "~", 1);
+///    if (y == E.screenrows / 3) {
+///      char welcome[80];
+///      int welcomelen = snprintf(welcome, sizeof(welcome),
+///        "Kilo editor -- version %s", KILO_VERSION);
+///      if (welcomelen > E.screencols) welcomelen = E.screencols;
+///      abAppend(ab, welcome, welcomelen);
+///    } else {
+///      abAppend(ab, "~", 1);
+///    }
+///
 ///    abAppend(ab, "\x1b[K", 3);
 ///    if (y < E.screenrows - 1) {
 ///      abAppend(ab, "\r\n", 2);
 ///    }
 ///  }
 fn editor_draw_rows(editor_config: &EditorConfig, ab: &mut Vec<u8>) {
-    for _ in 0..(editor_config.screen_rows - 1) {
-        ab.extend(b"~");
+    let screen_rows = editor_config.screen_rows;
+    let screen_cols = editor_config.screen_cols as usize;
+
+    for y in 0..(screen_rows - 1) {
+        if y == screen_rows / 3 {
+            let welcome = format!("{} editor -- version {}", PKG_NAME, PKG_VERSION);
+            let truncate = std::cmp::min(welcome.len(), screen_cols);
+            ab.extend(&welcome.as_bytes()[..truncate]);
+        } else {
+            ab.extend(b"~");
+        }
+
         ab.extend(CLEAR_LINE);
         ab.extend(b"\r\n");
     }
