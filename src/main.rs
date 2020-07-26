@@ -35,6 +35,7 @@ enum Key {
     Arrow(Direction),
     Char(u8),
     Ctrl(u8),
+    Page(Direction),
 }
 
 const CLEAR_LINE: &[u8; 3] = b"\x1b[K";
@@ -192,14 +193,26 @@ fn disable_raw_mode(fd: RawFd, original: Termios) -> Result<(), std::io::Error> 
 ///   char seq[3];
 ///   if (read(STDIN_FILENO, &seq[0], 1) != 1) return '\x1b';
 ///   if (read(STDIN_FILENO, &seq[1], 1) != 1) return '\x1b';
+///
 ///   if (seq[0] == '[') {
-///     switch (seq[1]) {
-///       case 'A': return ARROW_UP;
-///       case 'B': return ARROW_DOWN;
-///       case 'C': return ARROW_RIGHT;
-///       case 'D': return ARROW_LEFT;
+///     if (seq[1] >= '0' && seq[1] <= '9') {
+///       if (read(STDIN_FILENO, &seq[2], 1) != 1) return '\x1b';
+///       if (seq[2] == '~') {
+///         switch (seq[1]) {
+///           case '5': return PAGE_UP;
+///           case '6': return PAGE_DOWN;
+///         }
+///       }
+///     } else {
+///       switch (seq[1]) {
+///         case 'A': return ARROW_UP;
+///         case 'B': return ARROW_DOWN;
+///         case 'C': return ARROW_RIGHT;
+///         case 'D': return ARROW_LEFT;
+///       }
 ///     }
 ///   }
+///
 ///   return '\x1b';
 /// } else {
 ///   return c;
@@ -215,16 +228,19 @@ fn editor_read_key(editor_config: &EditorConfig) -> Result<Key, Error> {
     let key = if b'\x1b' == c {
         // Some escape sequences are 2 bytes long (like arrow keys), others are
         // 3 (like page up/down).
-        let mut seq = [0u8; 2];
-        if 2 != read(stdin, &mut seq)? {
+        let mut seq = [0u8; 3];
+        let bytes_read = read(stdin, &mut seq)?;
+        if !(bytes_read == 2 || bytes_read == 3) {
             return Result::Ok(Key::Char(c));
         }
 
         match seq {
-            [b'[', b'A'] => Key::Arrow(Direction::Up),
-            [b'[', b'B'] => Key::Arrow(Direction::Down),
-            [b'[', b'C'] => Key::Arrow(Direction::Right),
-            [b'[', b'D'] => Key::Arrow(Direction::Left),
+            [b'[', b'A', _] => Key::Arrow(Direction::Up),
+            [b'[', b'B', _] => Key::Arrow(Direction::Down),
+            [b'[', b'C', _] => Key::Arrow(Direction::Right),
+            [b'[', b'D', _] => Key::Arrow(Direction::Left),
+            [b'[', b'5', b'~'] => Key::Page(Direction::Up),
+            [b'[', b'6', b'~'] => Key::Page(Direction::Down),
             _ => Key::Char(c),
         }
     } else if is_ctrl(c) {
