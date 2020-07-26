@@ -25,6 +25,8 @@ use termios::os::linux::{
     VMIN,
     VTIME,
 };
+
+use std::cmp::min;
 use std::os::unix::io::{RawFd};
 
 /*** define ***/
@@ -106,7 +108,7 @@ impl From<std::num::ParseIntError> for Error {
 }
 
 enum Event {
-    CursorMove(Direction),
+    CursorMove(Direction, u16),
     None,
     Quit,
 }
@@ -385,7 +387,7 @@ fn get_window_size(stdin:RawFd, stdout:RawFd) -> Result<(u16,u16), Error> {
 ///    }
 ///  }
 fn editor_draw_rows(editor_config:&EditorConfig, ab:&mut Vec<u8>) {
-    use std::cmp::{Ordering, min};
+    use std::cmp::Ordering;
     let screen_rows = editor_config.screen_rows;
     let screen_cols = editor_config.screen_cols as usize;
 
@@ -456,6 +458,9 @@ fn editor_refresh_screen(editor_config:&EditorConfig) -> Result<(), Error> {
 
 /*** input ***/
 
+/// Using "saturating" addition and substraction to have controlled overflow.
+/// Thanks to that the min check can be skipped for substractions.
+/// ---
 /// switch (key) {
 ///   case ARROW_LEFT:
 ///     if (E.cx != 0) {
@@ -478,18 +483,20 @@ fn editor_refresh_screen(editor_config:&EditorConfig) -> Result<(), Error> {
 ///     }
 ///     break;
 /// }
-fn editor_move_cursor(editor_config:&mut EditorConfig, direction:Direction) {
+fn editor_move_cursor(editor_config:&mut EditorConfig, direction:Direction, times:u16) {
     use Direction::*;
+
     let (cx, cy) = editor_config.cursor;
+    let max_cx = cx.saturating_add(times);
+    let max_cy = cy.saturating_add(times);
     let max_x = editor_config.screen_cols - 1;
     let max_y = editor_config.screen_rows - 1;
 
     let cursor = match direction {
-        Down if cy < max_y => (cx, cy + 1),
-        Up   if 0 < cy     => (cx, cy - 1),
-        Right if cx < max_x => (cx + 1, cy),
-        Left  if 0 < cx     => (cx - 1, cy),
-        _ => (cx, cy)
+        Down  => (cx, min(max_y, max_cy)),
+        Up    => (cx, cy.saturating_sub(times)),
+        Right => (min(max_x, max_cx),       cy),
+        Left  => (cx.saturating_sub(times), cy),
     };
 
     editor_config.cursor = cursor;
@@ -501,6 +508,15 @@ fn editor_move_cursor(editor_config:&mut EditorConfig, direction:Direction) {
 ///     exit(0);
 ///     break;
 ///
+///   case PAGE_UP:
+///   case PAGE_DOWN:
+///     {
+///       int times = E.screenrows;
+///       while (times--)
+///         editorMoveCursor(c == PAGE_UP ? ARROW_UP : ARROW_DOWN);
+///     }
+///     break;
+///
 ///   case ARROW_UP:
 ///   case ARROW_DOWN:
 ///   case ARROW_LEFT:
@@ -509,9 +525,11 @@ fn editor_move_cursor(editor_config:&mut EditorConfig, direction:Direction) {
 ///     break;
 /// }
 fn editor_process_keypress(editor_config:&EditorConfig) -> Result<Event, Error> {
+    let rows = editor_config.screen_rows;
     let result = match editor_read_key(editor_config)? {
-        Key::Arrow(direction) => Event::CursorMove(direction),
+        Key::Arrow(direction) => Event::CursorMove(direction, 1),
         Key::Ctrl(b'q') => Event::Quit,
+        Key::Page(direction) => Event::CursorMove(direction, rows),
         _ => Event::None,
     };
     Result::Ok(result)
@@ -546,7 +564,8 @@ fn main() -> Result<(), Error> {
         editor_refresh_screen(&editor_config)?;
         match editor_process_keypress(&editor_config)? {
             Event::Quit => break,
-            Event::CursorMove(direction) => editor_move_cursor(&mut editor_config, direction),
+            Event::CursorMove(direction, amount)
+                => editor_move_cursor(&mut editor_config, direction, amount),
             _ => continue,
         }
     }
