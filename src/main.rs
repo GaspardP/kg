@@ -24,6 +24,8 @@ fn ctrl_key(c: u8) -> u8 {
 
 const CLEAR_SCREEN: &[u8; 4] = b"\x1b[2J";
 const CURSOR_HOME: &[u8; 3] = b"\x1b[H";
+const HIDE_CURSOR: &[u8; 6] = b"\x1b[?25l";
+const SHOW_CURSOR: &[u8; 6] = b"\x1b[?25h";
 
 /*** data ***/
 
@@ -317,19 +319,23 @@ fn editor_draw_rows(editor_config: &EditorConfig, ab: &mut Vec<u8>) {
 /// [1] https://vt100.net/docs/vt100-ug/chapter3.html#ED
 /// ---
 /// struct abuf ab = ABUF_INIT;
+/// abAppend(&ab, "\x1b[?25l", 6);
 /// abAppend(&ab, "\x1b[2J", 4);
 /// abAppend(&ab, "\x1b[H", 3);
 /// editorDrawRows(&ab);
 /// abAppend(&ab, "\x1b[H", 3);
+/// abAppend(&ab, "\x1b[?25h", 6);
 /// write(STDOUT_FILENO, ab.b, ab.len);
 /// abFree(&ab);
 fn editor_refresh_screen(editor_config: &EditorConfig) -> Result<(), Error> {
     let stdout = editor_config.stdout;
-    let mut ab = Vec::<u8>::with_capacity(10);
+    let mut ab = Vec::<u8>::with_capacity(22);
+    ab.extend(HIDE_CURSOR);
     ab.extend(CLEAR_SCREEN);
     ab.extend(CURSOR_HOME);
     editor_draw_rows(editor_config, &mut ab);
     ab.extend(CURSOR_HOME);
+    ab.extend(SHOW_CURSOR);
 
     write(stdout, &ab)?;
     Result::Ok(())
