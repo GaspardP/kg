@@ -103,6 +103,7 @@ enum Event {
 struct EditorConfig {
     cursor: (u16, u16),
     original_termios: Termios,
+    rows: Vec<String>,
     stdin: RawFd,
     stdout: RawFd,
     screen_rows: u16,
@@ -389,27 +390,49 @@ fn get_window_size(stdin: RawFd, stdout: RawFd) -> Result<(u16, u16), Error> {
     }
 }
 
+/*** file i/o ***/
+
+/// All the size and allocation are handled by the Vect type in Rust
+/// ---
+/// char *line = "Hello, world!";
+/// ssize_t linelen = 13;
+/// E.row.size = linelen;
+/// E.row.chars = malloc(linelen + 1);
+/// memcpy(E.row.chars, line, linelen);
+/// E.row.chars[linelen] = '\0';
+/// E.numrows = 1;
+fn editor_open(editor_config: &mut EditorConfig) {
+    let line = "Hello, world!";
+    editor_config.rows.push(line.to_string());
+}
+
 /*** output ***/
 
 /// Draws a vertical column of 24 `~`
 /// ---
 ///  int y;
-///  for (y = 0; y < E.screenrows; y++) {
-///    if (y == E.screenrows / 3) {
-///      char welcome[80];
-///      int welcomelen = snprintf(welcome, sizeof(welcome),
-///        "Kilo editor -- version %s", KILO_VERSION);
-///      if (welcomelen > E.screencols) welcomelen = E.screencols;
-///      int padding = (E.screencols - welcomelen) / 2;
-///      if (padding) {
-///        abAppend(ab, "~", 1);
-///        padding--;
-///      }
-///      while (padding--) abAppend(ab, " ", 1);
-///      abAppend(ab, welcome, welcomelen);
-///    } else {
-///      abAppend(ab, "~", 1);
-///    }
+/// for (y = 0; y < E.screenrows; y++) {
+///   if (y >= E.numrows) {
+///     if (y == E.screenrows / 3) {
+///       char welcome[80];
+///       int welcomelen = snprintf(welcome, sizeof(welcome),
+///         "Kilo editor -- version %s", KILO_VERSION);
+///       if (welcomelen > E.screencols) welcomelen = E.screencols;
+///       int padding = (E.screencols - welcomelen) / 2;
+///       if (padding) {
+///         abAppend(ab, "~", 1);
+///         padding--;
+///       }
+///       while (padding--) abAppend(ab, " ", 1);
+///       abAppend(ab, welcome, welcomelen);
+///     } else {
+///       abAppend(ab, "~", 1);
+///     }
+///   } else {
+///     int len = E.row.size;
+///     if (len > E.screencols) len = E.screencols;
+///     abAppend(ab, E.row.chars, len);
+///   }
 ///
 ///    abAppend(ab, "\x1b[K", 3);
 ///    if (y < E.screenrows - 1) {
@@ -418,11 +441,15 @@ fn get_window_size(stdin: RawFd, stdout: RawFd) -> Result<(u16, u16), Error> {
 ///  }
 fn editor_draw_rows(editor_config: &EditorConfig, ab: &mut Vec<u8>) {
     use std::cmp::Ordering;
-    let screen_rows = editor_config.screen_rows;
+    let screen_rows = editor_config.screen_rows as usize;
     let screen_cols = editor_config.screen_cols as usize;
+    let rows = &editor_config.rows;
 
     for y in 0..(screen_rows - 1) {
-        if y == screen_rows / 3 {
+        if let Some(line) = rows.get(y) {
+            let truncate = min(line.len(), screen_cols);
+            ab.extend(&line.as_bytes()[..truncate]);
+        } else if y == screen_rows / 3 {
             let welcome = format!("{} editor -- version {}", PKG_NAME, PKG_VERSION);
             let truncate = min(welcome.len(), screen_cols);
 
@@ -585,6 +612,7 @@ fn init_editor(stdin: RawFd, stdout: RawFd) -> Result<EditorConfig, Error> {
     let editor_config = EditorConfig {
         cursor: (0, 0),
         original_termios,
+        rows: vec![],
         stdin,
         stdout,
         screen_rows,
@@ -598,6 +626,7 @@ fn main() -> Result<(), Error> {
     let stdin: RawFd = std::io::stdin().as_raw_fd();
     let stdout: RawFd = std::io::stdout().as_raw_fd();
     let mut editor_config = init_editor(stdin, stdout)?;
+    editor_open(&mut editor_config);
 
     loop {
         editor_refresh_screen(&editor_config)?;
