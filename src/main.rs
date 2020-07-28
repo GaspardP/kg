@@ -392,18 +392,43 @@ fn get_window_size(stdin: RawFd, stdout: RawFd) -> Result<(u16, u16), Error> {
 
 /*** file i/o ***/
 
-/// All the size and allocation are handled by the Vect type in Rust
+/// All the size and allocation are handled by the Vect type in Rust. The
+/// `BufRead::lines()` splits the lines on carriage returns and removes them
+/// from the result. We don't need to read the input one char at the time and
+/// can just save the String in the rows.
 /// ---
-/// char *line = "Hello, world!";
-/// ssize_t linelen = 13;
-/// E.row.size = linelen;
-/// E.row.chars = malloc(linelen + 1);
-/// memcpy(E.row.chars, line, linelen);
-/// E.row.chars[linelen] = '\0';
-/// E.numrows = 1;
-fn editor_open(editor_config: &mut EditorConfig) {
-    let line = "Hello, world!";
-    editor_config.rows.push(line.to_string());
+/// FILE *fp = fopen(filename, "r");
+/// if (!fp) die("fopen");
+/// char *line = NULL;
+/// size_t linecap = 0;
+/// ssize_t linelen;
+/// linelen = getline(&line, &linecap, fp);
+/// if (linelen != -1) {
+///   while (linelen > 0 && (line[linelen - 1] == '\n' ||
+///                          line[linelen - 1] == '\r'))
+///     linelen--;
+///   E.row.size = linelen;
+///   E.row.chars = malloc(linelen + 1);
+///   memcpy(E.row.chars, line, linelen);
+///   E.row.chars[linelen] = '\0';
+///   E.numrows = 1;
+/// }
+/// free(line);
+/// fclose(fp);
+fn editor_open(editor_config: &mut EditorConfig, filename: &str) -> Result<(), Error> {
+    use std::fs::File;
+    use std::io::{BufRead, BufReader};
+
+    let file = File::open(filename)?;
+    let reader = BufReader::new(file);
+    let mut lines = reader.lines();
+
+    if let Some(Ok(first_line)) = lines.next() {
+        let line = first_line;
+        editor_config.rows.push(line);
+    }
+
+    Result::Ok(())
 }
 
 /*** output ***/
@@ -449,7 +474,7 @@ fn editor_draw_rows(editor_config: &EditorConfig, ab: &mut Vec<u8>) {
         if let Some(line) = rows.get(y) {
             let truncate = min(line.len(), screen_cols);
             ab.extend(&line.as_bytes()[..truncate]);
-        } else if y == screen_rows / 3 {
+        } else if rows.is_empty() && y == screen_rows / 3 {
             let welcome = format!("{} editor -- version {}", PKG_NAME, PKG_VERSION);
             let truncate = min(welcome.len(), screen_cols);
 
@@ -623,10 +648,15 @@ fn init_editor(stdin: RawFd, stdout: RawFd) -> Result<EditorConfig, Error> {
 
 fn main() -> Result<(), Error> {
     use std::os::unix::io::AsRawFd;
+
     let stdin: RawFd = std::io::stdin().as_raw_fd();
     let stdout: RawFd = std::io::stdout().as_raw_fd();
     let mut editor_config = init_editor(stdin, stdout)?;
-    editor_open(&mut editor_config);
+
+    let args: Vec<String> = std::env::args().collect();
+    if let Some(filename) = args.get(1) {
+        editor_open(&mut editor_config, filename)?;
+    }
 
     loop {
         editor_refresh_screen(&editor_config)?;
