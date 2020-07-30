@@ -404,11 +404,7 @@ fn get_window_size(stdin:RawFd, stdout:RawFd) -> Result<(u16,u16), Error> {
 ///   while (linelen > 0 && (line[linelen - 1] == '\n' ||
 ///                          line[linelen - 1] == '\r'))
 ///     linelen--;
-///   E.row.size = linelen;
-///   E.row.chars = malloc(linelen + 1);
-///   memcpy(E.row.chars, line, linelen);
-///   E.row.chars[linelen] = '\0';
-///   E.numrows = 1;
+///   editorAppendRow(line, linelen);
 /// }
 /// free(line);
 /// fclose(fp);
@@ -420,8 +416,7 @@ fn editor_open(editor_config:&mut EditorConfig, filename:&str) -> Result<(), Err
     let reader = BufReader::new(file);
     let mut lines = reader.lines();
 
-    if let Some(Ok(first_line)) = lines.next() {
-        let line = first_line;
+    while let Some(Ok(line)) = lines.next() {
         editor_config.rows.push(line);
     }
 
@@ -451,9 +446,9 @@ fn editor_open(editor_config:&mut EditorConfig, filename:&str) -> Result<(), Err
 ///       abAppend(ab, "~", 1);
 ///     }
 ///   } else {
-///     int len = E.row.size;
+///     int len = E.row[y].size;
 ///     if (len > E.screencols) len = E.screencols;
-///     abAppend(ab, E.row.chars, len);
+///     abAppend(ab, E.row[y].chars, len);
 ///   }
 ///
 ///    abAppend(ab, "\x1b[K", 3);
@@ -495,10 +490,10 @@ fn editor_draw_rows(editor_config:&EditorConfig, ab:&mut Vec<u8>) {
         }
 
         ab.extend(CLEAR_LINE);
-        ab.extend(b"\r\n");
+        if y < max_line - 1 {
+            ab.extend(b"\r\n");
+        }
     }
-    ab.extend(b"~");
-    ab.extend(CLEAR_LINE);
 }
 
 /// Writes the "ED" escape sequence (clear screen [1]) to the terminal. `\x1b`
