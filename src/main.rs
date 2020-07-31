@@ -426,6 +426,27 @@ fn editor_open(editor_config:&mut EditorConfig, filename:&str) -> Result<(), Err
 
 /*** output ***/
 
+/// if (E.cy < E.rowoff) {
+///   E.rowoff = E.cy;
+/// }
+/// if (E.cy >= E.rowoff + E.screenrows) {
+///   E.rowoff = E.cy - E.screenrows + 1;
+/// }
+fn editor_scroll(editor_config:&mut EditorConfig) {
+    let (_x, cursor_y) = editor_config.cursor;
+    let cy = cursor_y as usize;
+    let row_offset = editor_config.row_offset;
+    let screen_rows = editor_config.screen_rows as usize;
+
+    if cy < row_offset {
+        editor_config.row_offset = cy;
+    }
+
+    if cy >= row_offset + screen_rows {
+        editor_config.row_offset = cy - screen_rows + 1;
+    }
+}
+
 /// Draws a vertical column of 24 `~`
 /// ---
 /// int y;
@@ -492,7 +513,7 @@ fn editor_draw_rows(editor_config:&EditorConfig, ab:&mut Vec<u8>) {
         }
 
         ab.extend(CLEAR_LINE);
-        if y < max_line - 1 {
+        if y <= (screen_rows - 1) {
             ab.extend(b"\r\n");
         }
     }
@@ -503,6 +524,7 @@ fn editor_draw_rows(editor_config:&EditorConfig, ab:&mut Vec<u8>) {
 ///
 /// [1] https://vt100.net/docs/vt100-ug/chapter3.html#ED
 /// ---
+/// editorScroll();
 /// struct abuf ab = ABUF_INIT;
 /// abAppend(&ab, "\x1b[?25l", 6);
 /// abAppend(&ab, "\x1b[H", 3);
@@ -513,8 +535,12 @@ fn editor_draw_rows(editor_config:&EditorConfig, ab:&mut Vec<u8>) {
 /// abAppend(&ab, "\x1b[?25h", 6);
 /// write(STDOUT_FILENO, ab.b, ab.len);
 /// abFree(&ab);
-fn editor_refresh_screen(editor_config:&EditorConfig) -> Result<(), Error> {
+fn editor_refresh_screen(editor_config:&mut EditorConfig) -> Result<(), Error> {
+    let row_offset = editor_config.row_offset as u16;
     let stdout = editor_config.stdout;
+
+    editor_scroll(editor_config);
+
     let mut ab = Vec::<u8>::with_capacity(22);
     ab.extend(HIDE_CURSOR);
     ab.extend(CURSOR_HOME);
@@ -522,8 +548,10 @@ fn editor_refresh_screen(editor_config:&EditorConfig) -> Result<(), Error> {
 
     let (cx, cy) = editor_config.cursor;
     // The cursor escape sequence is 1-indexed. The code sequence parameters are
-    // (rows, cols) which means (cy, cx)
-    let move_cursor = format!("\x1b[{};{}H", cy + 1, cx + 1);
+    // (rows, cols) which means (cy, cx). `cy` refers to the position in the the
+    // file, so the `row_offset` is used to translate that to a position on the
+    // screen.
+    let move_cursor = format!("\x1b[{};{}H", cy + 1 - row_offset, cx + 1);
     ab.extend(move_cursor.as_bytes());
 
     ab.extend(SHOW_CURSOR);
@@ -566,7 +594,7 @@ fn editor_move_cursor(editor_config:&mut EditorConfig, direction:Direction, time
     let max_cx = cx.saturating_add(times);
     let max_cy = cy.saturating_add(times);
     let max_x = editor_config.screen_cols - 1;
-    let max_y = editor_config.screen_rows - 1;
+    let max_y = editor_config.rows.len() as u16;
 
     let cursor = match direction {
         Down  => (cx, min(max_y, max_cy)),
@@ -655,7 +683,7 @@ fn main() -> Result<(), Error> {
     }
 
     loop {
-        editor_refresh_screen(&editor_config)?;
+        editor_refresh_screen(&mut editor_config)?;
         match editor_process_keypress(&editor_config)? {
             Event::Quit => break,
             Event::CursorMove(direction, amount)
