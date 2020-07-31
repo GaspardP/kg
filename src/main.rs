@@ -103,6 +103,7 @@ enum Event {
 struct EditorConfig {
     cursor: (u16, u16),
     original_termios: Termios,
+    row_offset: u16,
     rows: Vec<String>,
     stdin: RawFd,
     stdout: RawFd,
@@ -403,7 +404,7 @@ fn get_window_size(stdin: RawFd, stdout: RawFd) -> Result<(u16, u16), Error> {
 /// size_t linecap = 0;
 /// ssize_t linelen;
 /// linelen = getline(&line, &linecap, fp);
-/// if (linelen != -1) {
+/// while ((linelen = getline(&line, &linecap, fp)) != -1) {
 ///   while (linelen > 0 && (line[linelen - 1] == '\n' ||
 ///                          line[linelen - 1] == '\r'))
 ///     linelen--;
@@ -430,10 +431,11 @@ fn editor_open(editor_config: &mut EditorConfig, filename: &str) -> Result<(), E
 
 /// Draws a vertical column of 24 `~`
 /// ---
-///  int y;
+/// int y;
 /// for (y = 0; y < E.screenrows; y++) {
-///   if (y >= E.numrows) {
-///     if (y == E.screenrows / 3) {
+///   int filerow = y + E.rowoff;
+///   if (filerow >= E.numrows) {
+///     if (E.numrows == 0 && y == E.screenrows / 3) {
 ///       char welcome[80];
 ///       int welcomelen = snprintf(welcome, sizeof(welcome),
 ///         "Kilo editor -- version %s", KILO_VERSION);
@@ -449,30 +451,30 @@ fn editor_open(editor_config: &mut EditorConfig, filename: &str) -> Result<(), E
 ///       abAppend(ab, "~", 1);
 ///     }
 ///   } else {
-///     int len = E.row[y].size;
+///     int len = E.row[filerow].size;
 ///     if (len > E.screencols) len = E.screencols;
-///     abAppend(ab, E.row[y].chars, len);
+///     abAppend(ab, E.row[filerow].chars, len);
 ///   }
-///
-///    abAppend(ab, "\x1b[K", 3);
-///    if (y < E.screenrows - 1) {
-///      abAppend(ab, "\r\n", 2);
-///    }
-///  }
+///   abAppend(ab, "\x1b[K", 3);
+///   if (y < E.screenrows - 1) {
+///     abAppend(ab, "\r\n", 2);
+///   }
+/// }
 fn editor_draw_rows(editor_config: &EditorConfig, ab: &mut Vec<u8>) {
     use std::cmp::Ordering;
+    let row_offset = editor_config.row_offset as usize;
     let screen_rows = editor_config.screen_rows as usize;
     let screen_cols = editor_config.screen_cols as usize;
     let rows = &editor_config.rows;
 
     for y in 0..(screen_rows) {
-        if let Some(line) = rows.get(y) {
+        let file_row = y + row_offset;
+        if let Some(line) = rows.get(file_row) {
             let truncate = min(line.len(), screen_cols);
             ab.extend(&line.as_bytes()[..truncate]);
         } else if rows.is_empty() && y == screen_rows / 3 {
             let welcome = format!("{} editor -- version {}", PKG_NAME, PKG_VERSION);
             let truncate = min(welcome.len(), screen_cols);
-
             let padding = (screen_cols - truncate) / 2;
             match padding.cmp(&1) {
                 // No space to do padding
@@ -632,6 +634,7 @@ fn init_editor(stdin: RawFd, stdout: RawFd) -> Result<EditorConfig, Error> {
     let editor_config = EditorConfig {
         cursor: (0, 0),
         original_termios,
+        row_offset: 0,
         rows: vec![],
         stdin,
         stdout,
