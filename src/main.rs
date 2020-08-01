@@ -537,11 +537,9 @@ fn editor_draw_rows(editor_config: &EditorConfig, ab: &mut Vec<u8>) {
 /// abAppend(&ab, "\x1b[?25h", 6);
 /// write(STDOUT_FILENO, ab.b, ab.len);
 /// abFree(&ab);
-fn editor_refresh_screen(editor_config: &mut EditorConfig) -> Result<(), Error> {
+fn editor_refresh_screen(editor_config: &EditorConfig) -> Result<(), Error> {
     let row_offset = editor_config.row_offset;
     let stdout = editor_config.stdout;
-
-    editor_scroll(editor_config);
 
     let mut ab = Vec::<u8>::with_capacity(22);
     ab.extend(HIDE_CURSOR);
@@ -607,6 +605,9 @@ fn editor_move_cursor(editor_config: &mut EditorConfig, direction: &Direction, t
     };
 
     editor_config.cursor = cursor;
+
+    // After a cursor move, might need to scroll
+    editor_scroll(editor_config);
 }
 
 /// char c = editorReadKey();
@@ -685,7 +686,7 @@ fn main() -> Result<(), Error> {
     }
 
     loop {
-        editor_refresh_screen(&mut editor_config)?;
+        editor_refresh_screen(&editor_config)?;
         match editor_process_keypress(&editor_config)? {
             Event::Quit => break,
             Event::CursorMove(direction, amount) => {
