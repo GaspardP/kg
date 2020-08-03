@@ -103,6 +103,7 @@ enum Event {
 struct EditorConfig {
     cursor: (u16, u16),
     original_termios: Termios,
+    col_offset: u16,
     row_offset: u16,
     rows: Vec<String>,
     stdin: RawFd,
@@ -428,7 +429,12 @@ fn editor_open(editor_config: &mut EditorConfig, filename: &str) -> Result<(), E
 }
 
 /*** output ***/
-
+/// if (E.cx < E.coloff) {
+///   E.coloff = E.cx;
+/// }
+/// if (E.cx >= E.coloff + E.screencols) {
+///   E.coloff = E.cx - E.screencols + 1;
+/// }
 /// if (E.cy < E.rowoff) {
 ///   E.rowoff = E.cy;
 /// }
@@ -436,16 +442,28 @@ fn editor_open(editor_config: &mut EditorConfig, filename: &str) -> Result<(), E
 ///   E.rowoff = E.cy - E.screenrows + 1;
 /// }
 fn editor_scroll(editor_config: &mut EditorConfig) {
-    let (_cx, cy) = editor_config.cursor;
+    use std::cmp::max;
+
+    let (cx, cy) = editor_config.cursor;
+    let col_offset = editor_config.col_offset;
     let row_offset = editor_config.row_offset;
+    let screen_cols = editor_config.screen_cols;
     let screen_rows = editor_config.screen_rows;
+
+    if cx < col_offset {
+        editor_config.col_offset = cx;
+    }
+
+    if cx >= col_offset + screen_cols {
+        editor_config.col_offset = max(0, cx + 1 - screen_cols);
+    }
 
     if cy < row_offset {
         editor_config.row_offset = cy;
     }
 
     if cy >= row_offset + screen_rows {
-        editor_config.row_offset = cy - screen_rows + 1;
+        editor_config.row_offset = max(0, cy - screen_rows + 1);
     }
 }
 
@@ -471,9 +489,10 @@ fn editor_scroll(editor_config: &mut EditorConfig) {
 ///       abAppend(ab, "~", 1);
 ///     }
 ///   } else {
-///     int len = E.row[filerow].size;
+///     int len = E.row[filerow].size - E.coloff;
+///     if (len < 0) len = 0;
 ///     if (len > E.screencols) len = E.screencols;
-///     abAppend(ab, E.row[filerow].chars, len);
+///     abAppend(ab, &E.row[filerow].chars[E.coloff], len);
 ///   }
 ///   abAppend(ab, "\x1b[K", 3);
 ///   if (y < E.screenrows - 1) {
@@ -482,6 +501,7 @@ fn editor_scroll(editor_config: &mut EditorConfig) {
 /// }
 fn editor_draw_rows(editor_config: &EditorConfig, ab: &mut Vec<u8>) {
     use std::cmp::Ordering;
+    let col_offset = editor_config.col_offset as usize;
     let row_offset = editor_config.row_offset as usize;
     let screen_rows = editor_config.screen_rows as usize;
     let screen_cols = editor_config.screen_cols as usize;
@@ -489,9 +509,10 @@ fn editor_draw_rows(editor_config: &EditorConfig, ab: &mut Vec<u8>) {
 
     for y in 0..(screen_rows) {
         let file_row = y + row_offset;
+        let file_col = col_offset;
         if let Some(line) = rows.get(file_row) {
-            let truncate = min(line.len(), screen_cols);
-            ab.extend(&line.as_bytes()[..truncate]);
+            let truncate = min(line.len(), screen_cols + file_col);
+            ab.extend(&line.as_bytes()[file_col..truncate]);
         } else if rows.is_empty() && y == screen_rows / 3 {
             let welcome = format!("{} editor -- version {}", PKG_NAME, PKG_VERSION);
             let truncate = min(welcome.len(), screen_cols);
@@ -664,6 +685,7 @@ fn init_editor(stdin: RawFd, stdout: RawFd) -> Result<EditorConfig, Error> {
         cursor: (0, 0),
         original_termios,
         row_offset: 0,
+        col_offset: 0,
         rows: vec![],
         stdin,
         stdout,
