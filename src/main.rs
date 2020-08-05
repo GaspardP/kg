@@ -511,8 +511,9 @@ fn editor_draw_rows(editor_config: &EditorConfig, ab: &mut Vec<u8>) {
         let file_row = y + row_offset;
         let file_col = col_offset;
         if let Some(line) = rows.get(file_row) {
-            let truncate = min(line.len(), screen_cols + file_col);
-            ab.extend(&line.as_bytes()[file_col..truncate]);
+            let line_begin = min(file_col, line.len());
+            let line_end = min(line.len(), screen_cols + file_col);
+            ab.extend(&line.as_bytes()[line_begin..line_end]);
         } else if rows.is_empty() && y == screen_rows / 3 {
             let welcome = format!("{} editor -- version {}", PKG_NAME, PKG_VERSION);
             let truncate = min(welcome.len(), screen_cols);
@@ -593,9 +594,7 @@ fn editor_refresh_screen(editor_config: &EditorConfig) -> Result<(), Error> {
 ///     }
 ///     break;
 ///   case ARROW_RIGHT:
-///     if (E.cx != E.screencols - 1) {
 ///       E.cx++;
-///     }
 ///     break;
 ///   case ARROW_UP:
 ///     if (E.cy != 0) {
@@ -615,13 +614,12 @@ fn editor_move_cursor(editor_config: &mut EditorConfig, direction: &Direction, t
     let (cx, cy) = editor_config.cursor;
     let max_cx = cx.saturating_add(times);
     let max_cy = cy.saturating_add(times);
-    let max_x = editor_config.screen_cols - 1;
     let max_y = u16::try_from(editor_config.rows.len()).unwrap_or(u16::MAX);
 
     let cursor = match direction {
         Down => (cx, min(max_y, max_cy)),
         Up => (cx, cy.saturating_sub(times)),
-        Right => (min(max_x, max_cx), cy),
+        Right => (max_cx, cy),
         Left => (cx.saturating_sub(times), cy),
     };
 
