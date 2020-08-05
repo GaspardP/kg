@@ -552,12 +552,14 @@ fn editor_draw_rows(editor_config:&EditorConfig, ab:&mut Vec<u8>) {
 /// abAppend(&ab, "\x1b[H", 3);
 /// editorDrawRows(&ab);
 /// char buf[32];
-/// snprintf(buf, sizeof(buf), "\x1b[%d;%dH", E.cy + 1, E.cx + 1);
+/// snprintf(buf, sizeof(buf), "\x1b[%d;%dH", (E.cy - E.rowoff) + 1,
+///                                           (E.cx - E.coloff) + 1);
 /// abAppend(&ab, buf, strlen(buf));
 /// abAppend(&ab, "\x1b[?25h", 6);
 /// write(STDOUT_FILENO, ab.b, ab.len);
 /// abFree(&ab);
 fn editor_refresh_screen(editor_config:&EditorConfig) -> Result<(), Error> {
+    let col_offset = editor_config.col_offset as u16;
     let row_offset = editor_config.row_offset as u16;
     let stdout = editor_config.stdout;
 
@@ -571,7 +573,9 @@ fn editor_refresh_screen(editor_config:&EditorConfig) -> Result<(), Error> {
     // (rows, cols) which means (cy, cx). `cy` refers to the position in the the
     // file, so the `row_offset` is used to translate that to a position on the
     // screen.
-    let move_cursor = format!("\x1b[{};{}H", cy + 1 - row_offset, cx + 1);
+    let move_cursor = format!("\x1b[{};{}H",
+                              cy + 1 - row_offset,
+                              cx + 1 - col_offset);
     ab.extend(move_cursor.as_bytes());
 
     ab.extend(SHOW_CURSOR);
