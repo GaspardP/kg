@@ -589,6 +589,7 @@ fn editor_refresh_screen(editor_config:&EditorConfig) -> Result<(), Error> {
 /// Using "saturating" addition and substraction to have controlled overflow.
 /// Thanks to that the min check can be skipped for substractions.
 /// ---
+/// erow *row = (E.cy >= E.numrows) ? NULL : &E.row[E.cy];
 /// switch (key) {
 ///   case ARROW_LEFT:
 ///     if (E.cx != 0) {
@@ -596,7 +597,9 @@ fn editor_refresh_screen(editor_config:&EditorConfig) -> Result<(), Error> {
 ///     }
 ///     break;
 ///   case ARROW_RIGHT:
+///     if (row && E.cx < row->size) {
 ///       E.cx++;
+///     }
 ///     break;
 ///   case ARROW_UP:
 ///     if (E.cy != 0) {
@@ -604,7 +607,7 @@ fn editor_refresh_screen(editor_config:&EditorConfig) -> Result<(), Error> {
 ///     }
 ///     break;
 ///   case ARROW_DOWN:
-///     if (E.cy != E.screenrows - 1) {
+///     if (E.cy < E.numrows) {
 ///       E.cy++;
 ///     }
 ///     break;
@@ -612,17 +615,20 @@ fn editor_refresh_screen(editor_config:&EditorConfig) -> Result<(), Error> {
 fn editor_move_cursor(editor_config:&mut EditorConfig, direction:Direction, times:u16) {
     use Direction::*;
 
-    let (cx, cy) = editor_config.cursor;
-    let max_cx = cx.saturating_add(times);
-    let max_cy = cy.saturating_add(times);
-    let max_x = editor_config.screen_cols - 1;
+
+    let (current_cx, current_cy) = editor_config.cursor;
+    let line = editor_config.rows.get(current_cy as usize);
+    let line_length = line.map_or(0, |l| l.len());
+    let expected_cx = current_cx.saturating_add(times);
+    let expected_cy = current_cy.saturating_add(times);
+    let max_x = line_length as u16;
     let max_y = editor_config.rows.len() as u16;
 
     let cursor = match direction {
-        Down  => (cx, min(max_y, max_cy)),
-        Up    => (cx, cy.saturating_sub(times)),
-        Right => (max_cx, cy),
-        Left  => (cx.saturating_sub(times), cy),
+        Down  => (current_cx, min(max_y, expected_cy)),
+        Up    => (current_cx, current_cy.saturating_sub(times)),
+        Right => (min(max_x, expected_cx), current_cy),
+        Left  => (current_cx.saturating_sub(times), current_cy),
     };
 
     editor_config.cursor = cursor;
