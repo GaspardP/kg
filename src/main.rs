@@ -612,24 +612,36 @@ fn editor_refresh_screen(editor_config: &EditorConfig) -> Result<(), Error> {
 ///     }
 ///     break;
 /// }
+/// row = (E.cy >= E.numrows) ? NULL : &E.row[E.cy];
+/// int rowlen = row ? row->size : 0;
+/// if (E.cx > rowlen) {
+///   E.cx = rowlen;
+/// }
 fn editor_move_cursor(editor_config: &mut EditorConfig, direction: &Direction, times: u16) {
     use std::convert::TryFrom;
     use Direction::{Down, Left, Right, Up};
 
+    let capped_line_length = |y| {
+        let line_length = editor_config.rows.get(y as usize).map_or(0, String::len);
+        u16::try_from(line_length).unwrap_or(u16::MAX)
+    };
     let (current_cx, current_cy) = editor_config.cursor;
     let expected_cx = current_cx.saturating_add(times);
     let expected_cy = current_cy.saturating_add(times);
-    let line_length = editor_config
-        .rows
-        .get(current_cy as usize)
-        .map_or(0, String::len);
-    let number_lines = editor_config.rows.len();
-    let max_x = u16::try_from(line_length).unwrap_or(u16::MAX);
-    let max_y = u16::try_from(number_lines).unwrap_or(u16::MAX);
+    let max_x = capped_line_length(current_cy);
+    let max_y = u16::try_from(editor_config.rows.len()).unwrap_or(u16::MAX);
 
     let cursor = match direction {
-        Down => (current_cx, min(max_y, expected_cy)),
-        Up => (current_cx, current_cy.saturating_sub(times)),
+        Down => {
+            let cy = min(max_y, expected_cy);
+            let cx = min(current_cx, capped_line_length(cy));
+            (cx, cy)
+        }
+        Up => {
+            let cy = current_cy.saturating_sub(times);
+            let cx = min(current_cx, capped_line_length(cy));
+            (cx, cy)
+        }
         Right => (min(max_x, expected_cx), current_cy),
         Left => (current_cx.saturating_sub(times), current_cy),
     };
