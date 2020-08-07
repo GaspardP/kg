@@ -612,9 +612,14 @@ fn editor_refresh_screen(editor_config:&EditorConfig) -> Result<(), Error> {
 ///     }
 ///     break;
 /// }
+/// row = (E.cy >= E.numrows) ? NULL : &E.row[E.cy];
+/// int rowlen = row ? row->size : 0;
+/// if (E.cx > rowlen) {
+///   E.cx = rowlen;
+/// }
 fn editor_move_cursor(editor_config:&mut EditorConfig, direction:Direction, times:u16) {
     use Direction::*;
-
+    use std::convert::TryInto;
 
     let (current_cx, current_cy) = editor_config.cursor;
     let line = editor_config.rows.get(current_cy as usize);
@@ -625,8 +630,18 @@ fn editor_move_cursor(editor_config:&mut EditorConfig, direction:Direction, time
     let max_y = editor_config.rows.len() as u16;
 
     let cursor = match direction {
-        Down  => (current_cx, min(max_y, expected_cy)),
-        Up    => (current_cx, current_cy.saturating_sub(times)),
+        Down  => {
+            let cy = min(max_y, expected_cy);
+            let line_length = editor_config.rows.get(cy as usize).map_or(0, |l| l.len());
+            let cx = min(current_cx, line_length.try_into().unwrap());
+            (cx, cy)
+        },
+        Up    => {
+            let cy = current_cy.saturating_sub(times);
+            let line_length = editor_config.rows.get(cy as usize).map_or(0, |l| l.len());
+            let cx = min(current_cx, line_length.try_into().unwrap());
+            (cx, cy)
+        },
         Right => (min(max_x, expected_cx), current_cy),
         Left  => (current_cx.saturating_sub(times), current_cy),
     };
