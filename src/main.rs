@@ -594,6 +594,9 @@ fn editor_refresh_screen(editor_config:&EditorConfig) -> Result<(), Error> {
 ///   case ARROW_LEFT:
 ///     if (E.cx != 0) {
 ///       E.cx--;
+///     } else if (E.cy > 0) {
+///       E.cy--;
+///       E.cx = E.row[E.cy].size;
 ///     }
 ///     break;
 ///   case ARROW_RIGHT:
@@ -643,7 +646,16 @@ fn editor_move_cursor(editor_config:&mut EditorConfig, direction:Direction, time
             (cx, cy)
         },
         Right => (min(max_x, expected_cx), current_cy),
-        Left  => (current_cx.saturating_sub(times), current_cy),
+        Left  => if 0 == current_cx && 0 < current_cy {
+            // Moving left at the beginning of the line wraps to the end of the
+            // previous line.
+            let cy = current_cy - 1;
+            let line_length = editor_config.rows.get(cy as usize).map_or(0, |l| l.len());
+            let cx:u16 = line_length.try_into().unwrap();
+            (cx, cy)
+        } else {
+            (current_cx.saturating_sub(times), current_cy)
+        },
     };
 
     editor_config.cursor = cursor;
