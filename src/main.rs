@@ -602,6 +602,9 @@ fn editor_refresh_screen(editor_config: &EditorConfig) -> Result<(), Error> {
 ///   case ARROW_RIGHT:
 ///     if (row && E.cx < row->size) {
 ///       E.cx++;
+///     } else if (row && E.cx == row->size) {
+///       E.cy++;
+///       E.cx = 0;
 ///     }
 ///     break;
 ///   case ARROW_UP:
@@ -645,7 +648,15 @@ fn editor_move_cursor(editor_config: &mut EditorConfig, direction: &Direction, t
             let cx = min(current_cx, capped_line_length(cy));
             (cx, cy)
         }
-        Right => (min(max_x, expected_cx), current_cy),
+        Right => {
+            if current_cx == max_x && current_cy < max_y {
+                // Moving right at the end of the line wraps to the beginning of the
+                // next line.
+                (0, current_cy + 1)
+            } else {
+                (min(max_x, expected_cx), current_cy)
+            }
+        }
         Left => {
             if 0 == current_cx && 0 < current_cy {
                 // Moving left at the beginning of the line wraps to the end of the
