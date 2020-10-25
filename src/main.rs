@@ -99,13 +99,24 @@ enum Event {
     Quit,
 }
 
+/// typedef struct erow {
+///   int size;
+///   int rsize;
+///   char *chars;
+///   char *render;
+/// } erow;
+struct ERow {
+    chars: String,
+    render: String,
+}
+
 #[allow(dead_code)]
 struct EditorConfig {
     cursor: (u16, u16),
     original_termios: Termios,
     col_offset: u16,
     row_offset: u16,
-    rows: Vec<String>,
+    rows: Vec<ERow>,
     stdin: RawFd,
     stdout: RawFd,
     screen_rows: u16,
@@ -422,7 +433,10 @@ fn editor_open(editor_config: &mut EditorConfig, filename: &str) -> Result<(), E
     let mut lines = reader.lines();
 
     while let Some(Ok(line)) = lines.next() {
-        editor_config.rows.push(line);
+        editor_config.rows.push(ERow {
+            chars: line.clone(),
+            render: line,
+        });
     }
 
     Result::Ok(())
@@ -510,7 +524,8 @@ fn editor_draw_rows(editor_config: &EditorConfig, ab: &mut Vec<u8>) {
     for y in 0..(screen_rows) {
         let file_row = y + row_offset;
         let file_col = col_offset;
-        if let Some(line) = rows.get(file_row) {
+        if let Some(erow) = rows.get(file_row) {
+            let line = &erow.render;
             let line_begin = min(file_col, line.len());
             let line_end = min(line.len(), screen_cols + file_col);
             ab.extend(&line.as_bytes()[line_begin..line_end]);
@@ -628,7 +643,10 @@ fn editor_move_cursor(editor_config: &mut EditorConfig, direction: &Direction, t
     use Direction::{Down, Left, Right, Up};
 
     let capped_line_length = |y| {
-        let line_length = editor_config.rows.get(y as usize).map_or(0, String::len);
+        let line_length = editor_config
+            .rows
+            .get(y as usize)
+            .map_or(0, |row| row.chars.len());
         u16::try_from(line_length).unwrap_or(u16::MAX)
     };
     let (current_cx, current_cy) = editor_config.cursor;
