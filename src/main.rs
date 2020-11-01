@@ -16,6 +16,7 @@ use termios::{
 
 const PKG_NAME: &str = env!("CARGO_PKG_NAME");
 const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
+const TAB_STOP: u16 = 4;
 
 const CTRL_MASK: u8 = 0x60;
 
@@ -403,6 +404,107 @@ fn get_window_size(stdin: RawFd, stdout: RawFd) -> Result<(u16, u16), Error> {
     }
 }
 
+/*** row operation ***/
+
+/// Replaces tabs with enough spaces to reach the next tab stop. This way the
+/// tab's display size can be controlled by the editor instead of using on the
+/// size set by the terminal.
+///---
+/// void editorUpdateRow(erow *row) {
+///   int tabs = 0;
+///   int j;
+///   for (j = 0; j < row->size; j++)
+///     if (row->chars[j] == '\t') tabs++;
+///   free(row->render);
+///   row->render = malloc(row->size + tabs*(KILO_TAB_STOP - 1) + 1);
+///   int idx = 0;
+///   for (j = 0; j < row->size; j++) {
+///     if (row->chars[j] == '\t') {
+///       row->render[idx++] = ' ';
+///       while (idx % KILO_TAB_STOP != 0) row->render[idx++] = ' ';
+///     } else {
+///       row->render[idx++] = row->chars[j];
+///     }
+///   }
+///   row->render[idx] = '\0';
+///   row->rsize = idx;
+/// }
+fn editor_update_row(tab_stop: u16, line: &str) -> String {
+    let tab_stop = tab_stop as usize;
+    let mut s = String::new();
+    for c in line.chars() {
+        if '\t' == c {
+            s.push(' ');
+            let end = (tab_stop - s.len() % tab_stop) % tab_stop;
+            for _ in 0..end {
+                s.push(' ');
+            }
+        } else {
+            s.push_str(&c.to_string());
+        }
+    }
+    s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test40_editor_update_row() {
+        assert_eq!("    |", editor_update_row(4, "	|"));
+    }
+    #[test]
+    fn test41_editor_update_row() {
+        assert_eq!("1   |", editor_update_row(4, "1	|"));
+    }
+    #[test]
+    fn test42_editor_update_row() {
+        assert_eq!("12  |", editor_update_row(4, "12	|"));
+    }
+    #[test]
+    fn test43_editor_update_row() {
+        assert_eq!("123 |", editor_update_row(4, "123	|"));
+    }
+    #[test]
+    fn test44_editor_update_row() {
+        assert_eq!("1234    |", editor_update_row(4, "1234	|"));
+    }
+
+    #[test]
+    fn test20_editor_update_row() {
+        assert_eq!("  |", editor_update_row(2, "	|"));
+    }
+    #[test]
+    fn test21_editor_update_row() {
+        assert_eq!("1 |", editor_update_row(2, "1	|"));
+    }
+    #[test]
+    fn test22_editor_update_row() {
+        assert_eq!("12  |", editor_update_row(2, "12	|"));
+    }
+
+    #[test]
+    fn test80_editor_update_row() {
+        assert_eq!("        |", editor_update_row(8, "	|"));
+    }
+    #[test]
+    fn test81_editor_update_row() {
+        assert_eq!("1       |", editor_update_row(8, "1	|"));
+    }
+    #[test]
+    fn test82_editor_update_row() {
+        assert_eq!("12      |", editor_update_row(8, "12	|"));
+    }
+    #[test]
+    fn test83_editor_update_row() {
+        assert_eq!("1234567 |", editor_update_row(8, "1234567	|"));
+    }
+    #[test]
+    fn test84_editor_update_row() {
+        assert_eq!("12345678        |", editor_update_row(8, "12345678	|"));
+    }
+}
+
 /*** file i/o ***/
 
 /// All the size and allocation are handled by the Vect type in Rust. The
@@ -434,8 +536,8 @@ fn editor_open(editor_config: &mut EditorConfig, filename: &str) -> Result<(), E
 
     while let Some(Ok(line)) = lines.next() {
         editor_config.rows.push(ERow {
-            chars: line.clone(),
-            render: line,
+            render: editor_update_row(TAB_STOP, &line),
+            chars: line,
         });
     }
 
