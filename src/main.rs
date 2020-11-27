@@ -113,7 +113,8 @@ struct ERow {
 
 #[allow(dead_code)]
 struct EditorConfig {
-    cursor: (u16, u16),
+    cursor: (u16, u16),  // chars cursor
+    rcursor: (u16, u16), // render cursor
     original_termios: Termios,
     col_offset: u16,
     row_offset: u16,
@@ -406,6 +407,34 @@ fn get_window_size(stdin: RawFd, stdout: RawFd) -> Result<(u16, u16), Error> {
 
 /*** row operation ***/
 
+/// Converts a `chars` index into a `render` index. For each tab characters
+/// located left of the cursor, we add to `cx` the number of columns needed to
+/// reach the next tab stop.
+/// ---
+/// int editorRowCxToRx(erow *row, int cx) {
+///   int rx = 0;
+///   int j;
+///   for (j = 0; j < cx; j++) {
+///     if (row->chars[j] == '\t')
+///       rx += (KILO_TAB_STOP - 1) - (rx % KILO_TAB_STOP);
+///     rx++;
+///   }
+///   return rx;
+/// }
+fn editor_row_cx_to_rx(chars: &str, cx: u16) -> u16 {
+    let mut rx: u16 = 0;
+    for (i, c) in chars.char_indices() {
+        if cx as usize <= i {
+            break;
+        }
+        if '\t' == c {
+            rx += TAB_STOP - 1 - (rx % TAB_STOP);
+        }
+        rx += 1;
+    }
+    rx
+}
+
 /// Replaces tabs with enough spaces to reach the next tab stop. This way the
 /// tab's display size can be controlled by the editor instead of using on the
 /// size set by the terminal.
@@ -545,17 +574,21 @@ fn editor_open(editor_config: &mut EditorConfig, filename: &str) -> Result<(), E
 }
 
 /*** output ***/
-/// if (E.cx < E.coloff) {
-///   E.coloff = E.cx;
-/// }
-/// if (E.cx >= E.coloff + E.screencols) {
-///   E.coloff = E.cx - E.screencols + 1;
+/// E.rx = 0;
+/// if (E.cy < E.numrows) {
+///   E.rx = editorRowCxToRx(&E.row[E.cy], E.cx);
 /// }
 /// if (E.cy < E.rowoff) {
 ///   E.rowoff = E.cy;
 /// }
 /// if (E.cy >= E.rowoff + E.screenrows) {
 ///   E.rowoff = E.cy - E.screenrows + 1;
+/// }
+/// if (E.rx < E.coloff) {
+///   E.coloff = E.rx;
+/// }
+/// if (E.rx >= E.coloff + E.screencols) {
+///   E.coloff = E.rx - E.screencols + 1;
 /// }
 fn editor_scroll(editor_config: &mut EditorConfig) {
     use std::cmp::max;
@@ -566,12 +599,19 @@ fn editor_scroll(editor_config: &mut EditorConfig) {
     let screen_cols = editor_config.screen_cols;
     let screen_rows = editor_config.screen_rows;
 
-    if cx < col_offset {
-        editor_config.col_offset = cx;
+    let rx: u16 = match editor_config.rows.get(cy as usize) {
+        Some(row) => editor_row_cx_to_rx(&row.chars, cx),
+        None => 0,
+    };
+
+    editor_config.rcursor = (rx, 0);
+
+    if rx < col_offset {
+        editor_config.col_offset = rx;
     }
 
-    if cx >= col_offset + screen_cols {
-        editor_config.col_offset = max(0, cx + 1 - screen_cols);
+    if rx >= col_offset + screen_cols {
+        editor_config.col_offset = max(0, rx + 1 - screen_cols);
     }
 
     if cy < row_offset {
@@ -687,12 +727,13 @@ fn editor_refresh_screen(editor_config: &EditorConfig) -> Result<(), Error> {
     ab.extend(CURSOR_HOME);
     editor_draw_rows(editor_config, &mut ab);
 
-    let (cx, cy) = editor_config.cursor;
+    let (_, cy) = editor_config.cursor;
+    let (rx, _) = editor_config.rcursor;
     // The cursor escape sequence is 1-indexed. The code sequence parameters are
     // (rows, cols) which means (cy, cx). `cy` refers to the position in the the
     // file, so the `row_offset` is used to translate that to a position on the
     // screen.
-    let move_cursor = format!("\x1b[{};{}H", cy + 1 - row_offset, cx + 1 - col_offset);
+    let move_cursor = format!("\x1b[{};{}H", cy + 1 - row_offset, rx + 1 - col_offset);
     ab.extend(move_cursor.as_bytes());
 
     ab.extend(SHOW_CURSOR);
@@ -847,6 +888,7 @@ fn init_editor(stdin: RawFd, stdout: RawFd) -> Result<EditorConfig, Error> {
     let (screen_rows, screen_cols) = get_window_size(stdin, stdout)?;
     let editor_config = EditorConfig {
         cursor: (0, 0),
+        rcursor: (0, 0),
         original_termios,
         row_offset: 0,
         col_offset: 0,
