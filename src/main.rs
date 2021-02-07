@@ -923,7 +923,7 @@ fn init_editor(stdin: RawFd, stdout: RawFd) -> Result<EditorConfig, Error> {
         rows: vec![],
         stdin,
         stdout,
-        screen_rows,
+        screen_rows: screen_rows.saturating_sub(1),
         screen_cols,
     };
     Result::Ok(editor_config)
