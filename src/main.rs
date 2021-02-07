@@ -6,6 +6,7 @@ extern crate termios;
 use nix::unistd::{read, write};
 use std::cmp::min;
 use std::os::unix::io::RawFd;
+use std::time::{Duration, Instant};
 use termios::os::target::{VMIN, VTIME};
 use termios::{
     tcgetattr, tcsetattr, Termios, BRKINT, CS8, ECHO, ICANON, ICRNL, IEXTEN, INPCK, ISIG, ISTRIP,
@@ -113,6 +114,11 @@ struct ERow {
     render: String,
 }
 
+struct StatusMessage {
+    message: String,
+    time: Instant,
+}
+
 #[allow(dead_code)]
 struct EditorConfig {
     cursor: (u16, u16),  // chars cursor
@@ -126,6 +132,7 @@ struct EditorConfig {
     screen_rows: u16,
     screen_cols: u16,
     filename: Option<String>,
+    status_message: Option<StatusMessage>,
 }
 
 impl Drop for EditorConfig {
@@ -722,6 +729,7 @@ fn editor_draw_rows(editor_config: &EditorConfig, ab: &mut Vec<u8>) {
 ///   }
 /// }
 /// abAppend(ab, "\x1b[m", 3);
+/// abAppend(ab, "\r\n", 2);
 fn editor_draw_status_bar(editor_config: &EditorConfig, ab: &mut Vec<u8>) {
     let width = editor_config.screen_cols as usize;
     let (_, cy) = editor_config.cursor;
@@ -750,6 +758,21 @@ fn editor_draw_status_bar(editor_config: &EditorConfig, ab: &mut Vec<u8>) {
     ab.extend(INVERT_COLOUR);
     ab.extend(padded_status.as_bytes());
     ab.extend(NORMAL_FORMAT);
+    ab.extend(b"\r\n");
+}
+
+/// abAppend(ab, "\x1b[K", 3);
+/// int msglen = strlen(E.statusmsg);
+/// if (msglen > E.screencols) msglen = E.screencols;
+/// if (msglen && time(NULL) - E.statusmsg_time < 5)
+/// abAppend(ab, E.statusmsg, msglen);
+fn editor_draw_message_bar(editor_config: &EditorConfig, ab: &mut Vec<u8>) {
+    ab.extend(CLEAR_LINE);
+    if let Some(StatusMessage { message, time }) = &editor_config.status_message {
+        if Instant::now() - *time < Duration::new(5, 0) {
+            ab.extend(message.as_bytes());
+        }
+    }
 }
 
 /// Writes the "ED" escape sequence (clear screen [1]) to the terminal. `\x1b`
@@ -780,6 +803,7 @@ fn editor_refresh_screen(editor_config: &EditorConfig) -> Result<(), Error> {
     ab.extend(CURSOR_HOME);
     editor_draw_rows(editor_config, &mut ab);
     editor_draw_status_bar(editor_config, &mut ab);
+    editor_draw_message_bar(editor_config, &mut ab);
 
     let (_, cy) = editor_config.cursor;
     let (rx, _) = editor_config.rcursor;
@@ -794,6 +818,21 @@ fn editor_refresh_screen(editor_config: &EditorConfig) -> Result<(), Error> {
 
     write(stdout, &ab)?;
     Result::Ok(())
+}
+
+/// The original version uses a variadic function. This usecase is left out
+/// for now.
+/// ---
+/// va_list ap;
+/// va_start(ap, fmt);
+/// vsnprintf(E.statusmsg, sizeof(E.statusmsg), fmt, ap);
+/// va_end(ap);
+/// E.statusmsg_time = time(NULL);
+fn editor_set_status_message(editor_config: &mut EditorConfig, fmt: &str) {
+    editor_config.status_message = Some(StatusMessage {
+        message: fmt.to_string(),
+        time: Instant::now(),
+    });
 }
 
 /*** input ***/
@@ -971,7 +1010,7 @@ fn editor_process_keypress(editor_config: &EditorConfig) -> Result<Event, Error>
 /// E.numrows = 0;
 /// E.row = NULL;
 /// if (getWindowSize(&E.screenrows, &E.screencols) == -1) die("getWindowSize");
-/// E.screenrows -= 1;
+/// E.screenrows -= 2;
 fn init_editor(stdin: RawFd, stdout: RawFd) -> Result<EditorConfig, Error> {
     let original_termios = Termios::from_fd(stdin)?;
     enable_raw_mode(stdin, original_termios)?;
@@ -985,9 +1024,10 @@ fn init_editor(stdin: RawFd, stdout: RawFd) -> Result<EditorConfig, Error> {
         rows: vec![],
         stdin,
         stdout,
-        screen_rows: screen_rows.saturating_sub(1),
+        screen_rows: screen_rows.saturating_sub(2),
         screen_cols,
         filename: Option::None,
+        status_message: Option::None,
     };
     Result::Ok(editor_config)
 }
@@ -1003,6 +1043,8 @@ fn main() -> Result<(), Error> {
     if let Some(filename) = args.get(1) {
         editor_open(&mut editor_config, filename)?;
     }
+
+    editor_set_status_message(&mut editor_config, "HELP: Ctrl-Q = quit");
 
     loop {
         editor_refresh_screen(&editor_config)?;
