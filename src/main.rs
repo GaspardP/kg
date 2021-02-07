@@ -47,6 +47,8 @@ const CLEAR_LINE: &[u8; 3] = b"\x1b[K";
 const CLEAR_SCREEN: &[u8; 4] = b"\x1b[2J";
 const CURSOR_HOME: &[u8; 3] = b"\x1b[H";
 const HIDE_CURSOR: &[u8; 6] = b"\x1b[?25l";
+const INVERT_COLOUR: &[u8; 4] = b"\x1b[7m";
+const NORMAL_FORMAT: &[u8; 3] = b"\x1b[m";
 const SHOW_CURSOR: &[u8; 6] = b"\x1b[?25h";
 
 /*** data ***/
@@ -694,10 +696,22 @@ fn editor_draw_rows(editor_config: &EditorConfig, ab: &mut Vec<u8>) {
         }
 
         ab.extend(CLEAR_LINE);
-        if y < screen_rows - 1 {
-            ab.extend(b"\r\n");
-        }
+        ab.extend(b"\r\n");
     }
+}
+
+/// abAppend(ab, "\x1b[7m", 4);
+/// int len = 0;
+/// while (len < E.screencols) {
+///   abAppend(ab, " ", 1);
+///   len++;
+/// }
+/// abAppend(ab, "\x1b[m", 3);
+fn editor_draw_status_bar(editor_config: &EditorConfig, ab: &mut Vec<u8>) {
+    let padding = editor_config.screen_cols - 1;
+    ab.extend(INVERT_COLOUR);
+    ab.extend(vec![b' '; padding as usize]);
+    ab.extend(NORMAL_FORMAT);
 }
 
 /// Writes the "ED" escape sequence (clear screen [1]) to the terminal. `\x1b`
@@ -710,6 +724,7 @@ fn editor_draw_rows(editor_config: &EditorConfig, ab: &mut Vec<u8>) {
 /// abAppend(&ab, "\x1b[?25l", 6);
 /// abAppend(&ab, "\x1b[H", 3);
 /// editorDrawRows(&ab);
+/// editorDrawStatusBar(&ab);
 /// char buf[32];
 /// snprintf(buf, sizeof(buf), "\x1b[%d;%dH", (E.cy - E.rowoff) + 1,
 ///                                           (E.cx - E.coloff) + 1);
@@ -726,6 +741,7 @@ fn editor_refresh_screen(editor_config: &EditorConfig) -> Result<(), Error> {
     ab.extend(HIDE_CURSOR);
     ab.extend(CURSOR_HOME);
     editor_draw_rows(editor_config, &mut ab);
+    editor_draw_status_bar(editor_config, &mut ab);
 
     let (_, cy) = editor_config.cursor;
     let (rx, _) = editor_config.rcursor;
@@ -909,7 +925,15 @@ fn editor_process_keypress(editor_config: &EditorConfig) -> Result<Event, Error>
 
 /*** init ***/
 
+/// E.cx = 0;
+/// E.cy = 0;
+/// E.rx = 0;
+/// E.rowoff = 0;
+/// E.coloff = 0;
+/// E.numrows = 0;
+/// E.row = NULL;
 /// if (getWindowSize(&E.screenrows, &E.screencols) == -1) die("getWindowSize");
+/// E.screenrows -= 1;
 fn init_editor(stdin: RawFd, stdout: RawFd) -> Result<EditorConfig, Error> {
     let original_termios = Termios::from_fd(stdin)?;
     enable_raw_mode(stdin, original_termios)?;
