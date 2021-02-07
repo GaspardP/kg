@@ -768,10 +768,8 @@ fn editor_draw_status_bar(editor_config: &EditorConfig, ab: &mut Vec<u8>) {
 /// abAppend(ab, E.statusmsg, msglen);
 fn editor_draw_message_bar(editor_config: &EditorConfig, ab: &mut Vec<u8>) {
     ab.extend(CLEAR_LINE);
-    if let Some(StatusMessage { message, time }) = &editor_config.status_message {
-        if Instant::now() - *time < Duration::new(5, 0) {
-            ab.extend(message.as_bytes());
-        }
+    if let Some(StatusMessage { message, .. }) = &editor_config.status_message {
+        ab.extend(message.as_bytes());
     }
 }
 
@@ -833,6 +831,14 @@ fn editor_set_status_message(editor_config: &mut EditorConfig, fmt: &str) {
         message: fmt.to_string(),
         time: Instant::now(),
     });
+}
+
+fn editor_clear_status_message_after_timeout(editor_config: &mut EditorConfig) {
+    if let Some(StatusMessage { time, .. }) = editor_config.status_message {
+        if Duration::new(5, 0) < Instant::now() - time {
+            editor_config.status_message = Option::None;
+        }
+    }
 }
 
 /*** input ***/
@@ -1047,6 +1053,7 @@ fn main() -> Result<(), Error> {
     editor_set_status_message(&mut editor_config, "HELP: Ctrl-Q = quit");
 
     loop {
+        editor_clear_status_message_after_timeout(&mut editor_config);
         editor_refresh_screen(&editor_config)?;
         match editor_process_keypress(&editor_config)? {
             Event::Quit => break,
