@@ -836,6 +836,7 @@ fn editor_move_cursor(editor_config: &mut EditorConfig, direction: &Direction, t
     editor_scroll(editor_config);
 }
 
+/// int c = editorReadKey();
 /// switch (c) {
 ///   case CTRL_KEY('q'):
 ///     write(STDOUT_FILENO, "\x1b[2J", 4);
@@ -846,7 +847,8 @@ fn editor_move_cursor(editor_config: &mut EditorConfig, direction: &Direction, t
 ///     E.cx = 0;
 ///     break;
 ///   case END_KEY:
-///     E.cx = E.screencols - 1;
+///     if (E.cy < E.numrows)
+///       E.cx = E.row[E.cy].size;
 ///     break;
 ///   case PAGE_UP:
 ///   case PAGE_DOWN:
@@ -870,26 +872,33 @@ fn editor_move_cursor(editor_config: &mut EditorConfig, direction: &Direction, t
 ///     break;
 /// }
 fn editor_process_keypress(editor_config: &EditorConfig) -> Result<Event, Error> {
-    let cols = editor_config.screen_cols;
-    let rows = editor_config.screen_rows;
+    use std::convert::TryFrom;
+
+    let screen_rows = editor_config.screen_rows;
     let row_offset = editor_config.row_offset as u16;
     let (_, cy) = editor_config.cursor;
+    let line_length = editor_config
+        .rows
+        .get(cy as usize)
+        .map(|l| l.chars.len())
+        .map_or(0, |len| u16::try_from(len).unwrap_or(u16::MAX));
     let result = match editor_read_key(editor_config)? {
         Key::Arrow(direction) => Event::CursorMove(direction, 1),
         Key::Ctrl(b'q') => Event::Quit,
-        Key::End => Event::CursorMove(Direction::Right, cols),
-        Key::Home => Event::CursorMove(Direction::Left, cols),
+        Key::End => Event::CursorMove(Direction::Right, line_length),
+        Key::Home => Event::CursorMove(Direction::Left, line_length),
         Key::Page(Direction::Up) => Event::CursorMove(
             // Moving up by one screen plus cursor_y's offset from the top of
             // the screen
             Direction::Up,
-            rows.saturating_add(cy).saturating_sub(row_offset),
+            screen_rows.saturating_add(cy).saturating_sub(row_offset),
         ),
         Key::Page(Direction::Down) => Event::CursorMove(
             // Moving down by one screen plus enough to put the cursor to the
             // last line of the screen
             Direction::Down,
-            rows.saturating_add(rows)
+            screen_rows
+                .saturating_add(screen_rows)
                 .saturating_add(cy.saturating_sub(row_offset))
                 .saturating_sub(1),
         ),
