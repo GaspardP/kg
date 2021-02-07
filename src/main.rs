@@ -705,16 +705,29 @@ fn editor_draw_rows(editor_config: &EditorConfig, ab: &mut Vec<u8>) {
 }
 
 /// abAppend(ab, "\x1b[7m", 4);
-/// int len = 0;
+/// char status[80];
+/// int len = snprintf(status, sizeof(status), "%.20s - %d lines",
+///   E.filename ? E.filename : "[No Name]", E.numrows);
+/// if (len > E.screencols) len = E.screencols;
+/// abAppend(ab, status, len);
 /// while (len < E.screencols) {
 ///   abAppend(ab, " ", 1);
 ///   len++;
 /// }
 /// abAppend(ab, "\x1b[m", 3);
 fn editor_draw_status_bar(editor_config: &EditorConfig, ab: &mut Vec<u8>) {
-    let padding = editor_config.screen_cols - 1;
+    let status = format!(
+        "{:.20} - {} lines",
+        editor_config
+            .filename
+            .as_ref()
+            .unwrap_or(&"[No name]".to_string()),
+        editor_config.rows.len()
+    );
+    let width = editor_config.screen_cols as usize;
+    let padded_status = format!("{status:.width$}", status = status, width = width);
     ab.extend(INVERT_COLOUR);
-    ab.extend(vec![b' '; padding as usize]);
+    ab.extend(padded_status.as_bytes());
     ab.extend(NORMAL_FORMAT);
 }
 
