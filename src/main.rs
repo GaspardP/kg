@@ -125,6 +125,7 @@ struct EditorConfig {
     stdout: RawFd,
     screen_rows: u16,
     screen_cols: u16,
+    filename: Option<String>,
 }
 
 impl Drop for EditorConfig {
@@ -543,12 +544,13 @@ mod tests {
 /// from the result. We don't need to read the input one char at the time and
 /// can just save the String in the rows.
 /// ---
+/// free(E.filename);
+/// E.filename = strdup(filename);
 /// FILE *fp = fopen(filename, "r");
 /// if (!fp) die("fopen");
 /// char *line = NULL;
 /// size_t linecap = 0;
 /// ssize_t linelen;
-/// linelen = getline(&line, &linecap, fp);
 /// while ((linelen = getline(&line, &linecap, fp)) != -1) {
 ///   while (linelen > 0 && (line[linelen - 1] == '\n' ||
 ///                          line[linelen - 1] == '\r'))
@@ -560,6 +562,8 @@ mod tests {
 fn editor_open(editor_config: &mut EditorConfig, filename: &str) -> Result<(), Error> {
     use std::fs::File;
     use std::io::{BufRead, BufReader};
+
+    editor_config.filename = Some(filename.to_string());
 
     let file = File::open(filename)?;
     let reader = BufReader::new(file);
@@ -949,6 +953,7 @@ fn init_editor(stdin: RawFd, stdout: RawFd) -> Result<EditorConfig, Error> {
         stdout,
         screen_rows: screen_rows.saturating_sub(1),
         screen_cols,
+        filename: Option::None,
     };
     Result::Ok(editor_config)
 }
