@@ -705,26 +705,47 @@ fn editor_draw_rows(editor_config: &EditorConfig, ab: &mut Vec<u8>) {
 }
 
 /// abAppend(ab, "\x1b[7m", 4);
-/// char status[80];
+/// char status[80], rstatus[80];
 /// int len = snprintf(status, sizeof(status), "%.20s - %d lines",
 ///   E.filename ? E.filename : "[No Name]", E.numrows);
+/// int rlen = snprintf(rstatus, sizeof(rstatus), "%d/%d",
+///   E.cy + 1, E.numrows);
 /// if (len > E.screencols) len = E.screencols;
 /// abAppend(ab, status, len);
 /// while (len < E.screencols) {
-///   abAppend(ab, " ", 1);
-///   len++;
+///   if (E.screencols - len == rlen) {
+///     abAppend(ab, rstatus, rlen);
+///     break;
+///   } else {
+///     abAppend(ab, " ", 1);
+///     len++;
+///   }
 /// }
 /// abAppend(ab, "\x1b[m", 3);
 fn editor_draw_status_bar(editor_config: &EditorConfig, ab: &mut Vec<u8>) {
-    let status = format!(
-        "{:.20} - {} lines",
-        editor_config
-            .filename
-            .as_ref()
-            .unwrap_or(&"[No name]".to_string()),
-        editor_config.rows.len()
-    );
     let width = editor_config.screen_cols as usize;
+    let (_, cy) = editor_config.cursor;
+    let no_filename = "[No name]".to_string();
+    let filename = editor_config.filename.as_ref().unwrap_or(&no_filename);
+    let numrows = editor_config.rows.len();
+    let lines_info = if 1 == numrows {
+        "1 line".to_string()
+    } else {
+        format!("{} lines", numrows)
+    };
+    let file_info = format!(
+        "{filename:.20} - {lines_info}",
+        filename = filename,
+        lines_info = lines_info,
+    );
+    let position = format!("{}/{}", cy + 1, numrows);
+    let padding = width.saturating_sub(file_info.len());
+    let status = format!(
+        "{file_info}{position:>padding$}",
+        file_info = file_info,
+        position = position,
+        padding = padding,
+    );
     let padded_status = format!("{status:.width$}", status = status, width = width);
     ab.extend(INVERT_COLOUR);
     ab.extend(padded_status.as_bytes());
