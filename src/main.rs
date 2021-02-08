@@ -36,7 +36,7 @@ enum Direction {
 
 enum Key {
     Arrow(Direction),
-    Char(u8),
+    Char(char),
     Ctrl(u8),
     Delete,
     End,
@@ -99,6 +99,7 @@ impl From<std::num::ParseIntError> for Error {
 
 enum Event {
     CursorMove(Direction, u16),
+    InsertChar(char),
     None,
     Quit,
 }
@@ -273,7 +274,7 @@ fn editor_read_key(editor_config: &EditorConfig) -> Result<Key, Error> {
         let mut seq = [0u8; 3];
         let bytes_read = read(stdin, &mut seq)?;
         if !(bytes_read == 2 || bytes_read == 3) {
-            return Result::Ok(Key::Char(c));
+            return Result::Ok(Key::Char(char::from(c)));
         }
 
         #[allow(clippy::match_same_arms)]
@@ -296,13 +297,13 @@ fn editor_read_key(editor_config: &EditorConfig) -> Result<Key, Error> {
             // Page Up/Down
             [b'[', b'5', b'~'] => Key::Page(Direction::Up),
             [b'[', b'6', b'~'] => Key::Page(Direction::Down),
-            _ => Key::Char(c),
+            _ => Key::Char(char::from(c)),
         }
     } else if is_ctrl(c) {
         // Get the char out of the value to make it easier to match
         Key::Ctrl(c | CTRL_MASK)
     } else {
-        Key::Char(c)
+        Key::Char(char::from(c))
     };
 
     Result::Ok(key)
@@ -541,6 +542,50 @@ mod tests {
     #[test]
     fn test84_editor_update_row() {
         assert_eq!("12345678        |", editor_update_row(8, "12345678	|"));
+    }
+}
+
+/// if (at < 0 || at > row->size) at = row->size;
+/// row->chars = realloc(row->chars, row->size + 2);
+/// memmove(&row->chars[at + 1], &row->chars[at], row->size - at + 1);
+/// row->size++;
+/// row->chars[at] = c;
+/// editorUpdateRow(row);
+fn editor_row_insert_char(row: &mut ERow, at: usize, c: char) {
+    if row.chars.is_char_boundary(at) {
+        row.chars.insert(at, c);
+    } else {
+        row.chars.push(c);
+    }
+    row.render = editor_update_row(TAB_STOP, &row.chars);
+}
+
+/*** editor operations ***/
+
+/// Inserts a character at current cursor position. Contrary to the original
+/// implementation, does not update the position of the cursor. The original
+/// version expects `editor_refresh_screen` to update the rendered position of
+/// the cursor. In this version `editor_refresh_screen` does not mutate any
+/// state so the cursor needs to be moved with `editor_move_cursor` explicitly
+/// instead. This is done by the InsertChar event instead.
+/// ---
+/// if (E.cy == E.numrows) {
+///   editorAppendRow("", 0);
+/// }
+/// editorRowInsertChar(&E.row[E.cy], E.cx, c);
+/// E.cx++;
+fn editor_insert_char(editor_config: &mut EditorConfig, c: char) {
+    let (cursor_x, cursor_y) = editor_config.cursor;
+    let cx = cursor_x as usize;
+    let cy = cursor_y as usize;
+    if editor_config.rows.len() == cy {
+        let cs = c.to_string();
+        editor_config.rows.push(ERow {
+            render: editor_update_row(TAB_STOP, &cs),
+            chars: cs,
+        });
+    } else if let Some(row) = editor_config.rows.get_mut(cy) {
+        editor_row_insert_char(row, cx, c);
     }
 }
 
@@ -843,8 +888,12 @@ fn editor_clear_status_message_after_timeout(editor_config: &mut EditorConfig) {
 
 /*** input ***/
 
-/// Using "saturating" addition and substraction to have controlled overflow.
-/// Thanks to that the min check can be skipped for substractions.
+/// Moves the cursor within the bounds of the file. Contrary to the original
+/// implementation also triggers a refresh of the scrolling status after the
+/// update. This limits the mutation of the cursor and keeps the screen refresh
+/// free of mutation. Using "saturating" addition and substraction to have
+/// controlled overflow. Thanks to that the min check can be skipped for
+/// substractions.
 /// ---
 /// erow *row = (E.cy >= E.numrows) ? NULL : &E.row[E.cy];
 /// switch (key) {
@@ -1001,6 +1050,7 @@ fn editor_process_keypress(editor_config: &EditorConfig) -> Result<Event, Error>
                 .saturating_add(cy.saturating_sub(row_offset))
                 .saturating_sub(1),
         ),
+        Key::Char(c) => Event::InsertChar(c),
         _ => Event::None,
     };
     Result::Ok(result)
@@ -1059,6 +1109,10 @@ fn main() -> Result<(), Error> {
             Event::Quit => break,
             Event::CursorMove(direction, amount) => {
                 editor_move_cursor(&mut editor_config, &direction, amount);
+            }
+            Event::InsertChar(c) => {
+                editor_insert_char(&mut editor_config, c);
+                editor_move_cursor(&mut editor_config, &Direction::Right, 1);
             }
             Event::None => continue,
         }
