@@ -36,13 +36,18 @@ enum Direction {
 
 enum Key {
     Arrow(Direction),
+    Backspace,
     Char(char),
-    Ctrl(u8),
+    Ctrl(char),
     Delete,
     End,
+    Enter,
+    Escape,
     Home,
     Page(Direction),
 }
+
+const BACKSPACE: u8 = 127;
 
 const CLEAR_LINE: &[u8; 3] = b"\x1b[K";
 const CLEAR_SCREEN: &[u8; 4] = b"\x1b[2J";
@@ -274,7 +279,7 @@ fn editor_read_key(editor_config: &EditorConfig) -> Result<Key, Error> {
         let mut seq = [0u8; 3];
         let bytes_read = read(stdin, &mut seq)?;
         if !(bytes_read == 2 || bytes_read == 3) {
-            return Result::Ok(Key::Char(char::from(c)));
+            return Result::Ok(Key::Escape);
         }
 
         #[allow(clippy::match_same_arms)]
@@ -297,11 +302,15 @@ fn editor_read_key(editor_config: &EditorConfig) -> Result<Key, Error> {
             // Page Up/Down
             [b'[', b'5', b'~'] => Key::Page(Direction::Up),
             [b'[', b'6', b'~'] => Key::Page(Direction::Down),
-            _ => Key::Char(char::from(c)),
+            _ => Key::Escape,
         }
     } else if is_ctrl(c) {
         // Get the char out of the value to make it easier to match
-        Key::Ctrl(c | CTRL_MASK)
+        Key::Ctrl(char::from(c | CTRL_MASK))
+    } else if b'\r' == c {
+        Key::Enter
+    } else if BACKSPACE == c {
+        Key::Backspace
     } else {
         Key::Char(char::from(c))
     };
@@ -986,6 +995,9 @@ fn editor_move_cursor(editor_config: &mut EditorConfig, direction: &Direction, t
 
 /// int c = editorReadKey();
 /// switch (c) {
+///   case '\r':
+///     /* TODO */
+///     break;
 ///   case CTRL_KEY('q'):
 ///     write(STDOUT_FILENO, "\x1b[2J", 4);
 ///     write(STDOUT_FILENO, "\x1b[H", 3);
@@ -997,6 +1009,11 @@ fn editor_move_cursor(editor_config: &mut EditorConfig, direction: &Direction, t
 ///   case END_KEY:
 ///     if (E.cy < E.numrows)
 ///       E.cx = E.row[E.cy].size;
+///     break;
+///   case BACKSPACE:
+///   case CTRL_KEY('h'):
+///   case DEL_KEY:
+///     /* TODO */
 ///     break;
 ///   case PAGE_UP:
 ///   case PAGE_DOWN:
@@ -1018,6 +1035,12 @@ fn editor_move_cursor(editor_config: &mut EditorConfig, direction: &Direction, t
 ///   case ARROW_RIGHT:
 ///     editorMoveCursor(c);
 ///     break;
+///   case CTRL_KEY('l'):
+///   case '\x1b':
+///     break;
+///   default:
+///     editorInsertChar(c);
+///     break;
 /// }
 fn editor_process_keypress(editor_config: &EditorConfig) -> Result<Event, Error> {
     use std::convert::TryFrom;
@@ -1030,10 +1053,14 @@ fn editor_process_keypress(editor_config: &EditorConfig) -> Result<Event, Error>
         .get(cy as usize)
         .map(|l| l.chars.len())
         .map_or(0, |len| u16::try_from(len).unwrap_or(u16::MAX));
+
+    #[allow(clippy::match_same_arms)]
     let result = match editor_read_key(editor_config)? {
         Key::Arrow(direction) => Event::CursorMove(direction, 1),
-        Key::Ctrl(b'q') => Event::Quit,
+        Key::Ctrl('q') => Event::Quit,
+        Key::Backspace | Key::Ctrl('h') | Key::Delete => Event::None, // TODO
         Key::End => Event::CursorMove(Direction::Right, line_length),
+        Key::Enter => Event::None, // TODO
         Key::Home => Event::CursorMove(Direction::Left, line_length),
         Key::Page(Direction::Up) => Event::CursorMove(
             // Moving up by one screen plus cursor_y's offset from the top of
@@ -1050,6 +1077,11 @@ fn editor_process_keypress(editor_config: &EditorConfig) -> Result<Event, Error>
                 .saturating_add(cy.saturating_sub(row_offset))
                 .saturating_sub(1),
         ),
+        // No need to refresh on `C-l` as the screen is already updated on every
+        // key press
+        Key::Ctrl('l') => Event::None,
+        // <escape> does nothing
+        Key::Char('\x1b') => Event::None,
         Key::Char(c) => Event::InsertChar(c),
         _ => Event::None,
     };
