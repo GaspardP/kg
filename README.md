@@ -21,6 +21,7 @@ The project depends on:
 ## Usage
 
 - `Ctrl+q` to quit
+- `Ctrl+s` to save the file
 - the arrow keys to move the cursor
 - `PgUp` and `PgDn` to move the cursor to the top or bottom of the screen
 - `Home` to move the cursor at the beginning of the line

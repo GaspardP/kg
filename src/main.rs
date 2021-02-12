@@ -107,6 +107,7 @@ enum Event {
     InsertChar(char),
     None,
     Quit,
+    Save,
 }
 
 /// typedef struct erow {
@@ -600,6 +601,31 @@ fn editor_insert_char(editor_config: &mut EditorConfig, c: char) {
 
 /*** file i/o ***/
 
+/// int totlen = 0;
+/// int j;
+/// for (j = 0; j < E.numrows; j++)
+///   totlen += E.row[j].size + 1;
+/// *buflen = totlen;
+/// char *buf = malloc(totlen);
+/// char *p = buf;
+/// for (j = 0; j < E.numrows; j++) {
+///   memcpy(p, E.row[j].chars, E.row[j].size);
+///   p += E.row[j].size;
+///   *p = '\n';
+///   p++;
+/// }
+/// return buf;
+fn editor_rows_to_string(editor_config: &EditorConfig) -> String {
+    let mut text = editor_config
+        .rows
+        .iter()
+        .map(|erow| erow.chars.as_ref())
+        .collect::<Vec<&str>>()
+        .join("\n");
+    text.push('\n');
+    text
+}
+
 /// All the size and allocation are handled by the Vect type in Rust. The
 /// `BufRead::lines()` splits the lines on carriage returns and removes them
 /// from the result. We don't need to read the input one char at the time and
@@ -638,6 +664,36 @@ fn editor_open(editor_config: &mut EditorConfig, filename: &str) -> Result<(), E
     }
 
     Result::Ok(())
+}
+
+/// if (E.filename == NULL) return;
+/// int len;
+/// char *buf = editorRowsToString(&len);
+/// int fd = open(E.filename, O_RDWR | O_CREAT, 0644);
+/// if (fd != -1) {
+///   if (ftruncate(fd, len) != -1) {
+///     if (write(fd, buf, len) == len) {
+///       close(fd);
+///       free(buf);
+///       return;
+///     }
+///   }
+///   close(fd);
+/// }
+/// free(buf);
+fn editor_save(editor_config: &EditorConfig) -> Result<(), Error> {
+    use std::fs::File;
+    use std::io::Write;
+
+    if let Some(filename) = &editor_config.filename {
+        // `File::create` creates or truncats the file if it already exists.
+        let mut file = File::create(filename)?;
+        file.write_all(editor_rows_to_string(editor_config).as_bytes())?;
+        Result::Ok(())
+    } else {
+        // New file without filename, not saving for now
+        Result::Ok(())
+    }
 }
 
 /*** output ***/
@@ -1003,6 +1059,9 @@ fn editor_move_cursor(editor_config: &mut EditorConfig, direction: &Direction, t
 ///     write(STDOUT_FILENO, "\x1b[H", 3);
 ///     exit(0);
 ///     break;
+///   case CTRL_KEY('s'):
+///     editorSave();
+///     break;
 ///   case HOME_KEY:
 ///     E.cx = 0;
 ///     break;
@@ -1058,6 +1117,7 @@ fn editor_process_keypress(editor_config: &EditorConfig) -> Result<Event, Error>
     let result = match editor_read_key(editor_config)? {
         Key::Arrow(direction) => Event::CursorMove(direction, 1),
         Key::Ctrl('q') => Event::Quit,
+        Key::Ctrl('s') => Event::Save,
         Key::Backspace | Key::Ctrl('h') | Key::Delete => Event::None, // TODO
         Key::End => Event::CursorMove(Direction::Right, line_length),
         Key::Enter => Event::None, // TODO
@@ -1146,6 +1206,7 @@ fn main() -> Result<(), Error> {
                 editor_insert_char(&mut editor_config, c);
                 editor_move_cursor(&mut editor_config, &Direction::Right, 1);
             }
+            Event::Save => editor_save(&editor_config)?,
             Event::None => continue,
         }
     }
