@@ -18,6 +18,7 @@ use termios::{
 const PKG_NAME: &str = env!("CARGO_PKG_NAME");
 const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 const TAB_STOP: u16 = 4;
+const QUIT_TIMES: u8 = 3;
 
 const CTRL_MASK: u8 = 0x60;
 
@@ -1209,6 +1210,7 @@ fn main() -> Result<(), Error> {
     let stdin: RawFd = std::io::stdin().as_raw_fd();
     let stdout: RawFd = std::io::stdout().as_raw_fd();
     let mut editor_config = init_editor(stdin, stdout)?;
+    let mut quit_times: u8 = QUIT_TIMES;
 
     let args: Vec<String> = std::env::args().collect();
     if let Some(filename) = args.get(1) {
@@ -1221,7 +1223,24 @@ fn main() -> Result<(), Error> {
         editor_clear_status_message_after_timeout(&mut editor_config);
         editor_refresh_screen(&editor_config)?;
         match editor_process_keypress(&editor_config)? {
-            Event::Quit => break,
+            Event::Quit => {
+                if editor_config.dirty && quit_times > 0 {
+                    editor_set_status_message(
+                        &mut editor_config,
+                        format!(
+                            "{warning} {press} {quit_times} {to_quit}",
+                            warning = "WARNING!!! File has unsaved changes.",
+                            press = "Press Ctrl-Q",
+                            quit_times = quit_times,
+                            to_quit = "more times to quit.",
+                        )
+                        .as_ref(),
+                    );
+                    quit_times -= 1;
+                    continue;
+                }
+                break;
+            }
             Event::CursorMove(direction, amount) => {
                 editor_move_cursor(&mut editor_config, &direction, amount);
             }
@@ -1239,6 +1258,7 @@ fn main() -> Result<(), Error> {
             }
             Event::None => continue,
         }
+        quit_times = QUIT_TIMES;
     }
 
     Result::Ok(())
