@@ -66,7 +66,7 @@ type Column = u32;
 /// manage the errors from the different used libraries.
 #[derive(Debug)]
 enum Error {
-    Io(std::io::Error),
+    IO(std::io::Error),
     Nix(nix::Error),
     ParseInt(std::num::ParseIntError),
     Simple(Line, Column),
@@ -86,7 +86,7 @@ macro_rules! simple_err {
 
 impl From<std::io::Error> for Error {
     fn from(error: std::io::Error) -> Self {
-        Error::Io(error)
+        Error::IO(error)
     }
 }
 
@@ -666,6 +666,8 @@ fn editor_open(editor_config: &mut EditorConfig, filename: &str) -> Result<(), E
     Result::Ok(())
 }
 
+/// Returns the number of bytes written or an Error
+/// ---
 /// if (E.filename == NULL) return;
 /// int len;
 /// char *buf = editorRowsToString(&len);
@@ -675,24 +677,30 @@ fn editor_open(editor_config: &mut EditorConfig, filename: &str) -> Result<(), E
 ///     if (write(fd, buf, len) == len) {
 ///       close(fd);
 ///       free(buf);
+///       editorSetStatusMessage("%d bytes written to disk", len);
 ///       return;
 ///     }
 ///   }
 ///   close(fd);
 /// }
 /// free(buf);
-fn editor_save(editor_config: &EditorConfig) -> Result<(), Error> {
+/// editorSetStatusMessage("Can't save! I/O error: %s", strerror(errno));
+fn editor_save(editor_config: &EditorConfig) -> Result<usize, Error> {
     use std::fs::File;
-    use std::io::Write;
+    use std::io::{Error as IOError, ErrorKind, Write};
 
     if let Some(filename) = &editor_config.filename {
         // `File::create` creates or truncats the file if it already exists.
         let mut file = File::create(filename)?;
-        file.write_all(editor_rows_to_string(editor_config).as_bytes())?;
-        Result::Ok(())
+        let buffer = editor_rows_to_string(editor_config).into_bytes();
+        file.write_all(&buffer)?;
+        Result::Ok(buffer.len())
     } else {
         // New file without filename, not saving for now
-        Result::Ok(())
+        Result::Err(Error::IO(IOError::new(
+            ErrorKind::Other,
+            "Saving to new file not supported",
+        )))
     }
 }
 
@@ -1192,7 +1200,7 @@ fn main() -> Result<(), Error> {
         editor_open(&mut editor_config, filename)?;
     }
 
-    editor_set_status_message(&mut editor_config, "HELP: Ctrl-Q = quit");
+    editor_set_status_message(&mut editor_config, "HELP: Ctrl-S = save | Ctrl-Q = quit");
 
     loop {
         editor_clear_status_message_after_timeout(&mut editor_config);
@@ -1206,7 +1214,16 @@ fn main() -> Result<(), Error> {
                 editor_insert_char(&mut editor_config, c);
                 editor_move_cursor(&mut editor_config, &Direction::Right, 1);
             }
-            Event::Save => editor_save(&editor_config)?,
+            Event::Save => match editor_save(&editor_config) {
+                Ok(len) => editor_set_status_message(
+                    &mut editor_config,
+                    format!("{} bytes written to disk", len).as_ref(),
+                ),
+                Err(e) => editor_set_status_message(
+                    &mut editor_config,
+                    format!("Can't save! I/O error: {:?}", e).as_ref(),
+                ),
+            },
             Event::None => continue,
         }
     }
