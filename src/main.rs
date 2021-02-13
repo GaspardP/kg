@@ -105,7 +105,8 @@ impl From<std::num::ParseIntError> for Error {
 
 enum Event {
     CursorMove(Direction, u16),
-    DeleteChar,
+    DeleteBackwardChar,
+    DeleteForwardChar,
     InsertChar(char),
     None,
     Quit,
@@ -1176,7 +1177,8 @@ fn editor_process_keypress(editor_config: &EditorConfig) -> Result<Event, Error>
         Key::Arrow(direction) => Event::CursorMove(direction, 1),
         Key::Ctrl('q') => Event::Quit,
         Key::Ctrl('s') => Event::Save,
-        Key::Backspace | Key::Ctrl('h') | Key::Delete => Event::DeleteChar,
+        Key::Backspace | Key::Ctrl('h') => Event::DeleteBackwardChar,
+        Key::Delete => Event::DeleteForwardChar,
         Key::End => Event::CursorMove(Direction::Right, line_length),
         Key::Enter => Event::None, // TODO
         Key::Home => Event::CursorMove(Direction::Left, line_length),
@@ -1279,7 +1281,12 @@ fn main() -> Result<(), Error> {
             Event::CursorMove(direction, amount) => {
                 editor_move_cursor(&mut editor_config, &direction, amount);
             }
-            Event::DeleteChar => {
+            Event::DeleteBackwardChar => {
+                editor_delete_char(&mut editor_config);
+                editor_move_cursor(&mut editor_config, &Direction::Left, 1);
+            }
+            Event::DeleteForwardChar => {
+                editor_move_cursor(&mut editor_config, &Direction::Right, 1);
                 editor_delete_char(&mut editor_config);
                 editor_move_cursor(&mut editor_config, &Direction::Left, 1);
             }
