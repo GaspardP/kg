@@ -105,6 +105,7 @@ impl From<std::num::ParseIntError> for Error {
 
 enum Event {
     CursorMove(Direction, u16),
+    DeleteChar,
     InsertChar(char),
     None,
     Quit,
@@ -572,6 +573,21 @@ fn editor_row_insert_char(row: &mut ERow, at: usize, c: char) {
     row.render = editor_update_row(TAB_STOP, &row.chars);
 }
 
+/// Removes the character on the left of the cursor.
+/// ---
+/// if (at < 0 || at >= row->size) return;
+/// memmove(&row->chars[at], &row->chars[at + 1], row->size - at);
+/// row->size--;
+/// editorUpdateRow(row);
+/// E.dirty++;
+fn editor_row_delete_char(row: &mut ERow, at: usize) {
+    if at == 0 || row.chars.len() < at {
+        return;
+    }
+    row.chars.remove(at - 1);
+    row.render = editor_update_row(TAB_STOP, &row.chars);
+}
+
 /*** editor operations ***/
 
 /// Inserts a character at current cursor position. Contrary to the original
@@ -598,6 +614,24 @@ fn editor_insert_char(editor_config: &mut EditorConfig, c: char) {
         });
     } else if let Some(row) = editor_config.rows.get_mut(cy) {
         editor_row_insert_char(row, cx, c);
+    }
+    editor_config.dirty = true;
+}
+
+/// if (E.cy == E.numrows) return;
+/// erow *row = &E.row[E.cy];
+/// if (E.cx > 0) {
+///   editorRowDelChar(row, E.cx - 1);
+///   E.cx--;
+/// }
+fn editor_delete_char(editor_config: &mut EditorConfig) {
+    let (cursor_x, cursor_y) = editor_config.cursor;
+    let cx = cursor_x as usize;
+    let cy = cursor_y as usize;
+    if editor_config.rows.len() == cy {
+        return;
+    } else if let Some(row) = editor_config.rows.get_mut(cy) {
+        editor_row_delete_char(row, cx);
     }
     editor_config.dirty = true;
 }
@@ -1095,7 +1129,8 @@ fn editor_move_cursor(editor_config: &mut EditorConfig, direction: &Direction, t
 ///   case BACKSPACE:
 ///   case CTRL_KEY('h'):
 ///   case DEL_KEY:
-///     /* TODO */
+///     if (c == DEL_KEY) editorMoveCursor(ARROW_RIGHT);
+///     editorDelChar();
 ///     break;
 ///   case PAGE_UP:
 ///   case PAGE_DOWN:
@@ -1141,7 +1176,7 @@ fn editor_process_keypress(editor_config: &EditorConfig) -> Result<Event, Error>
         Key::Arrow(direction) => Event::CursorMove(direction, 1),
         Key::Ctrl('q') => Event::Quit,
         Key::Ctrl('s') => Event::Save,
-        Key::Backspace | Key::Ctrl('h') | Key::Delete => Event::None, // TODO
+        Key::Backspace | Key::Ctrl('h') | Key::Delete => Event::DeleteChar,
         Key::End => Event::CursorMove(Direction::Right, line_length),
         Key::Enter => Event::None, // TODO
         Key::Home => Event::CursorMove(Direction::Left, line_length),
@@ -1243,6 +1278,10 @@ fn main() -> Result<(), Error> {
             }
             Event::CursorMove(direction, amount) => {
                 editor_move_cursor(&mut editor_config, &direction, amount);
+            }
+            Event::DeleteChar => {
+                editor_delete_char(&mut editor_config);
+                editor_move_cursor(&mut editor_config, &Direction::Left, 1);
             }
             Event::InsertChar(c) => {
                 editor_insert_char(&mut editor_config, c);
