@@ -134,6 +134,7 @@ struct EditorConfig {
     col_offset: u16,
     row_offset: u16,
     rows: Vec<ERow>,
+    dirty: bool,
     stdin: RawFd,
     stdout: RawFd,
     screen_rows: u16,
@@ -597,6 +598,7 @@ fn editor_insert_char(editor_config: &mut EditorConfig, c: char) {
     } else if let Some(row) = editor_config.rows.get_mut(cy) {
         editor_row_insert_char(row, cx, c);
     }
+    editor_config.dirty = true;
 }
 
 /*** file i/o ***/
@@ -663,6 +665,7 @@ fn editor_open(editor_config: &mut EditorConfig, filename: &str) -> Result<(), E
         });
     }
 
+    editor_config.dirty = false;
     Result::Ok(())
 }
 
@@ -685,7 +688,7 @@ fn editor_open(editor_config: &mut EditorConfig, filename: &str) -> Result<(), E
 /// }
 /// free(buf);
 /// editorSetStatusMessage("Can't save! I/O error: %s", strerror(errno));
-fn editor_save(editor_config: &EditorConfig) -> Result<usize, Error> {
+fn editor_save(editor_config: &mut EditorConfig) -> Result<(), Error> {
     use std::fs::File;
     use std::io::{Error as IOError, ErrorKind, Write};
 
@@ -694,7 +697,12 @@ fn editor_save(editor_config: &EditorConfig) -> Result<usize, Error> {
         let mut file = File::create(filename)?;
         let buffer = editor_rows_to_string(editor_config).into_bytes();
         file.write_all(&buffer)?;
-        Result::Ok(buffer.len())
+        editor_config.dirty = false;
+        editor_set_status_message(
+            editor_config,
+            format!("{} bytes written to disk", buffer.len()).as_ref(),
+        );
+        Result::Ok(())
     } else {
         // New file without filename, not saving for now
         Result::Err(Error::IO(IOError::new(
@@ -859,10 +867,16 @@ fn editor_draw_status_bar(editor_config: &EditorConfig, ab: &mut Vec<u8>) {
     } else {
         format!("{} lines", numrows)
     };
+    let dirty = if editor_config.dirty {
+        " (modified) "
+    } else {
+        ""
+    };
     let file_info = format!(
-        "{filename:.20} - {lines_info}",
+        "{filename:.20} - {lines_info}{dirty}",
         filename = filename,
         lines_info = lines_info,
+        dirty = dirty,
     );
     let position = format!("{}/{}", cy + 1, numrows);
     let padding = width.saturating_sub(file_info.len());
@@ -1178,6 +1192,7 @@ fn init_editor(stdin: RawFd, stdout: RawFd) -> Result<EditorConfig, Error> {
         row_offset: 0,
         col_offset: 0,
         rows: vec![],
+        dirty: false,
         stdin,
         stdout,
         screen_rows: screen_rows.saturating_sub(2),
@@ -1214,16 +1229,14 @@ fn main() -> Result<(), Error> {
                 editor_insert_char(&mut editor_config, c);
                 editor_move_cursor(&mut editor_config, &Direction::Right, 1);
             }
-            Event::Save => match editor_save(&editor_config) {
-                Ok(len) => editor_set_status_message(
-                    &mut editor_config,
-                    format!("{} bytes written to disk", len).as_ref(),
-                ),
-                Err(e) => editor_set_status_message(
-                    &mut editor_config,
-                    format!("Can't save! I/O error: {:?}", e).as_ref(),
-                ),
-            },
+            Event::Save => {
+                if let Err(e) = editor_save(&mut editor_config) {
+                    editor_set_status_message(
+                        &mut editor_config,
+                        format!("Can't save! I/O error: {:?}", e).as_ref(),
+                    );
+                }
+            }
             Event::None => continue,
         }
     }
