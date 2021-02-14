@@ -559,6 +559,20 @@ mod tests {
     }
 }
 
+/// if (at < 0 || at >= E.numrows) return;
+/// editorFreeRow(&E.row[at]);
+/// memmove(&E.row[at], &E.row[at + 1], sizeof(erow) * (E.numrows - at - 1));
+/// E.numrows--;
+/// E.dirty++;
+fn editor_delete_row(editor_config: &mut EditorConfig, at: usize) -> Option<ERow> {
+    if editor_config.rows.len() < at {
+        None
+    } else {
+        editor_config.dirty = true;
+        Some(editor_config.rows.remove(at))
+    }
+}
+
 /// if (at < 0 || at > row->size) at = row->size;
 /// row->chars = realloc(row->chars, row->size + 2);
 /// memmove(&row->chars[at + 1], &row->chars[at], row->size - at + 1);
@@ -571,6 +585,17 @@ fn editor_row_insert_char(row: &mut ERow, at: usize, c: char) {
     } else {
         row.chars.push(c);
     }
+    row.render = editor_update_row(TAB_STOP, &row.chars);
+}
+
+/// row->chars = realloc(row->chars, row->size + len + 1);
+/// memcpy(&row->chars[row->size], s, len);
+/// row->size += len;
+/// row->chars[row->size] = '\0';
+/// editorUpdateRow(row);
+/// E.dirty++;
+fn editor_row_append_string(row: &mut ERow, s: &str) {
+    row.chars.push_str(s);
     row.render = editor_update_row(TAB_STOP, &row.chars);
 }
 
@@ -620,17 +645,37 @@ fn editor_insert_char(editor_config: &mut EditorConfig, c: char) {
 }
 
 /// if (E.cy == E.numrows) return;
+/// if (E.cx == 0 && E.cy == 0) return;
 /// erow *row = &E.row[E.cy];
 /// if (E.cx > 0) {
 ///   editorRowDelChar(row, E.cx - 1);
 ///   E.cx--;
+/// } else {
+///   E.cx = E.row[E.cy - 1].size;
+///   editorRowAppendString(&E.row[E.cy - 1], row->chars, row->size);
+///   editorDelRow(E.cy);
+///   E.cy--;
 /// }
 fn editor_delete_char(editor_config: &mut EditorConfig) {
+    use std::convert::TryFrom;
+
     let (cursor_x, cursor_y) = editor_config.cursor;
     let cx = cursor_x as usize;
     let cy = cursor_y as usize;
-    if editor_config.rows.len() == cy {
+    if editor_config.rows.len() == cy || (0, 0) == editor_config.cursor {
         return;
+    } else if 0 == cursor_x {
+        if let Some(current_row) = editor_delete_row(editor_config, cy) {
+            // Get previous line length so we can set the cursor at the junction
+            // of the two lines
+            let line_length = editor_config.rows[cy - 1].chars.len();
+            let cursor_x = u16::try_from(line_length).unwrap_or(u16::MAX);
+            // `cursor_x` needs to be offset by one to compensate for the
+            // default "move one position right"
+            editor_config.cursor = (cursor_x + 1, cursor_y - 1);
+            // Merge previous and current lines
+            editor_row_append_string(&mut editor_config.rows[cy - 1], &current_row.chars);
+        }
     } else if let Some(row) = editor_config.rows.get_mut(cy) {
         editor_row_delete_char(row, cx);
     }
