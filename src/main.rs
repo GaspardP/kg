@@ -1110,7 +1110,9 @@ fn editor_clear_status_message_after_timeout(editor_config: &mut EditorConfig) {
 ///   editorSetStatusMessage(prompt, buf);
 ///   editorRefreshScreen();
 ///   int c = editorReadKey();
-///   if (c == '\x1b') {
+///   if (c == DEL_KEY || c == CTRL_KEY('h') || c == BACKSPACE) {
+///     if (buflen != 0) buf[--buflen] = '\0';
+///   } else if (c == '\x1b') {
 ///     editorSetStatusMessage("");
 ///     free(buf);
 ///     return NULL;
@@ -1135,6 +1137,9 @@ fn editor_prompt(editor_config: &mut EditorConfig, prompt: &str) -> Result<Optio
         editor_refresh_screen(editor_config)?;
         match editor_read_key(editor_config)? {
             Key::Char(c) => buffer.push(c),
+            Key::Backspace | Key::Ctrl('h') => {
+                buffer.pop();
+            }
             Key::Enter | Key::Ctrl('m') => {
                 editor_set_status_message(editor_config, "");
                 return Result::Ok(Some(buffer));
