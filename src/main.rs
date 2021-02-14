@@ -791,7 +791,11 @@ fn editor_open(editor_config: &mut EditorConfig, filename: &str) -> Result<(), E
 /// Returns the number of bytes written or an Error
 /// ---
 /// if (E.filename == NULL) {
-///   E.filename = editorPrompt("Save as: %s");
+///   E.filename = editorPrompt("Save as: %s (ESC to cancel)");
+///   if (E.filename == NULL) {
+///     editorSetStatusMessage("Save aborted");
+///     return;
+///   }
 /// }
 /// int len;
 /// char *buf = editorRowsToString(&len);
@@ -815,9 +819,12 @@ fn editor_save(editor_config: &mut EditorConfig) -> Result<(), Error> {
 
     let filename = if let Some(filename) = &editor_config.filename {
         filename
-    } else {
-        editor_config.filename = Some(editor_prompt(editor_config, "Save as: ")?);
+    } else if let Some(buffer) = editor_prompt(editor_config, "Save as (C-g to cancel): ")? {
+        editor_config.filename = Some(buffer);
         editor_config.filename.as_ref().unwrap()
+    } else {
+        editor_set_status_message(editor_config, "Save aborted");
+        return Result::Ok(());
     };
 
     // `File::create` creates or truncats the file if it already exists.
@@ -1103,7 +1110,11 @@ fn editor_clear_status_message_after_timeout(editor_config: &mut EditorConfig) {
 ///   editorSetStatusMessage(prompt, buf);
 ///   editorRefreshScreen();
 ///   int c = editorReadKey();
-///   if (c == '\r') {
+///   if (c == '\x1b') {
+///     editorSetStatusMessage("");
+///     free(buf);
+///     return NULL;
+///   } else if (c == '\r') {
 ///     if (buflen != 0) {
 ///       editorSetStatusMessage("");
 ///       return buf;
@@ -1117,7 +1128,7 @@ fn editor_clear_status_message_after_timeout(editor_config: &mut EditorConfig) {
 ///     buf[buflen] = '\0';
 ///   }
 /// }
-fn editor_prompt(editor_config: &mut EditorConfig, prompt: &str) -> Result<String, Error> {
+fn editor_prompt(editor_config: &mut EditorConfig, prompt: &str) -> Result<Option<String>, Error> {
     let mut buffer = String::with_capacity(128);
     loop {
         editor_set_status_message(editor_config, format!("{}{}", prompt, buffer).as_ref());
@@ -1126,7 +1137,10 @@ fn editor_prompt(editor_config: &mut EditorConfig, prompt: &str) -> Result<Strin
             Key::Char(c) => buffer.push(c),
             Key::Enter | Key::Ctrl('m') => {
                 editor_set_status_message(editor_config, "");
-                return Result::Ok(buffer);
+                return Result::Ok(Some(buffer));
+            }
+            Key::Escape | Key::Ctrl('g') => {
+                return Result::Ok(None);
             }
             _ => continue,
         }
