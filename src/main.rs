@@ -108,6 +108,7 @@ enum Event {
     DeleteBackwardChar,
     DeleteForwardChar,
     InsertChar(char),
+    InsertNewline,
     None,
     Quit,
     Save,
@@ -624,7 +625,7 @@ fn editor_row_delete_char(row: &mut ERow, at: usize) {
 /// instead. This is done by the InsertChar event instead.
 /// ---
 /// if (E.cy == E.numrows) {
-///   editorAppendRow("", 0);
+///   editorInsertRow(E.numrows, "", 0);
 /// }
 /// editorRowInsertChar(&E.row[E.cy], E.cx, c);
 /// E.cx++;
@@ -642,6 +643,43 @@ fn editor_insert_char(editor_config: &mut EditorConfig, c: char) {
         editor_row_insert_char(row, cx, c);
     }
     editor_config.dirty = true;
+}
+
+/// if (E.cx == 0) {
+///   editorInsertRow(E.cy, "", 0);
+/// } else {
+///   erow *row = &E.row[E.cy];
+///   editorInsertRow(E.cy + 1, &row->chars[E.cx], row->size - E.cx);
+///   row = &E.row[E.cy];
+///   row->size = E.cx;
+///   row->chars[row->size] = '\0';
+///   editorUpdateRow(row);
+/// }
+/// E.cy++;
+/// E.cx = 0;
+fn editor_insert_newline(editor_config: &mut EditorConfig) {
+    let (cursor_x, cursor_y) = editor_config.cursor;
+    let cy = cursor_y as usize;
+    if (0, 0) == (cursor_x, cursor_y) || editor_config.rows.len() == cy {
+        editor_config.rows.insert(
+            cy,
+            ERow {
+                chars: "".to_string(),
+                render: "".to_string(),
+            },
+        );
+    } else if let Some(mut row) = editor_config.rows.get_mut(cy) {
+        let cx = cursor_x as usize;
+        let new_line = row.chars.split_off(cx);
+        row.render = editor_update_row(TAB_STOP, &row.chars);
+        editor_config.rows.insert(
+            cy + 1,
+            ERow {
+                render: editor_update_row(TAB_STOP, &new_line),
+                chars: new_line,
+            },
+        );
+    }
 }
 
 /// if (E.cy == E.numrows) return;
@@ -1101,6 +1139,11 @@ fn editor_move_cursor(editor_config: &mut EditorConfig, direction: &Direction, t
     use std::convert::TryFrom;
     use Direction::{Down, Left, Right, Up};
 
+    // Make sure not to move the cursor if it needs to be moved 0 times.
+    if 0 == times {
+        return;
+    }
+
     let capped_line_length = |y| {
         let line_length = editor_config
             .rows
@@ -1155,7 +1198,7 @@ fn editor_move_cursor(editor_config: &mut EditorConfig, direction: &Direction, t
 /// int c = editorReadKey();
 /// switch (c) {
 ///   case '\r':
-///     /* TODO */
+///     editorInsertNewline();
 ///     break;
 ///   case CTRL_KEY('q'):
 ///     write(STDOUT_FILENO, "\x1b[2J", 4);
@@ -1225,7 +1268,7 @@ fn editor_process_keypress(editor_config: &EditorConfig) -> Result<Event, Error>
         Key::Backspace | Key::Ctrl('h') => Event::DeleteBackwardChar,
         Key::Delete => Event::DeleteForwardChar,
         Key::End => Event::CursorMove(Direction::Right, line_length),
-        Key::Enter => Event::None, // TODO
+        Key::Enter | Key::Ctrl('m') => Event::InsertNewline,
         Key::Home => Event::CursorMove(Direction::Left, line_length),
         Key::Page(Direction::Up) => Event::CursorMove(
             // Moving up by one screen plus cursor_y's offset from the top of
@@ -1338,6 +1381,14 @@ fn main() -> Result<(), Error> {
             Event::InsertChar(c) => {
                 editor_insert_char(&mut editor_config, c);
                 editor_move_cursor(&mut editor_config, &Direction::Right, 1);
+            }
+            Event::InsertNewline => {
+                editor_insert_newline(&mut editor_config);
+                editor_move_cursor(&mut editor_config, &Direction::Down, 1);
+                // Go to the beginning of the line if the cursor is not already
+                // there.
+                let (cursor_x, _) = editor_config.cursor;
+                editor_move_cursor(&mut editor_config, &Direction::Left, cursor_x);
             }
             Event::Save => {
                 if let Err(e) = editor_save(&mut editor_config) {
