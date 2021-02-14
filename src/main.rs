@@ -790,7 +790,9 @@ fn editor_open(editor_config: &mut EditorConfig, filename: &str) -> Result<(), E
 
 /// Returns the number of bytes written or an Error
 /// ---
-/// if (E.filename == NULL) return;
+/// if (E.filename == NULL) {
+///   E.filename = editorPrompt("Save as: %s");
+/// }
 /// int len;
 /// char *buf = editorRowsToString(&len);
 /// int fd = open(E.filename, O_RDWR | O_CREAT, 0644);
@@ -809,26 +811,25 @@ fn editor_open(editor_config: &mut EditorConfig, filename: &str) -> Result<(), E
 /// editorSetStatusMessage("Can't save! I/O error: %s", strerror(errno));
 fn editor_save(editor_config: &mut EditorConfig) -> Result<(), Error> {
     use std::fs::File;
-    use std::io::{Error as IOError, ErrorKind, Write};
+    use std::io::Write;
 
-    if let Some(filename) = &editor_config.filename {
-        // `File::create` creates or truncats the file if it already exists.
-        let mut file = File::create(filename)?;
-        let buffer = editor_rows_to_string(editor_config).into_bytes();
-        file.write_all(&buffer)?;
-        editor_config.dirty = false;
-        editor_set_status_message(
-            editor_config,
-            format!("{} bytes written to disk", buffer.len()).as_ref(),
-        );
-        Result::Ok(())
+    let filename = if let Some(filename) = &editor_config.filename {
+        filename
     } else {
-        // New file without filename, not saving for now
-        Result::Err(Error::IO(IOError::new(
-            ErrorKind::Other,
-            "Saving to new file not supported",
-        )))
-    }
+        editor_config.filename = Some(editor_prompt(editor_config, "Save as: ")?);
+        editor_config.filename.as_ref().unwrap()
+    };
+
+    // `File::create` creates or truncats the file if it already exists.
+    let mut file = File::create(filename)?;
+    let buffer = editor_rows_to_string(editor_config).into_bytes();
+    file.write_all(&buffer)?;
+    editor_config.dirty = false;
+    editor_set_status_message(
+        editor_config,
+        format!("{} bytes written to disk", buffer.len()).as_ref(),
+    );
+    Result::Ok(())
 }
 
 /*** output ***/
@@ -1093,6 +1094,44 @@ fn editor_clear_status_message_after_timeout(editor_config: &mut EditorConfig) {
 }
 
 /*** input ***/
+
+/// size_t bufsize = 128;
+/// char *buf = malloc(bufsize);
+/// size_t buflen = 0;
+/// buf[0] = '\0';
+/// while (1) {
+///   editorSetStatusMessage(prompt, buf);
+///   editorRefreshScreen();
+///   int c = editorReadKey();
+///   if (c == '\r') {
+///     if (buflen != 0) {
+///       editorSetStatusMessage("");
+///       return buf;
+///     }
+///   } else if (!iscntrl(c) && c < 128) {
+///     if (buflen == bufsize - 1) {
+///       bufsize *= 2;
+///       buf = realloc(buf, bufsize);
+///     }
+///     buf[buflen++] = c;
+///     buf[buflen] = '\0';
+///   }
+/// }
+fn editor_prompt(editor_config: &mut EditorConfig, prompt: &str) -> Result<String, Error> {
+    let mut buffer = String::with_capacity(128);
+    loop {
+        editor_set_status_message(editor_config, format!("{}{}", prompt, buffer).as_ref());
+        editor_refresh_screen(editor_config)?;
+        match editor_read_key(editor_config)? {
+            Key::Char(c) => buffer.push(c),
+            Key::Enter | Key::Ctrl('m') => {
+                editor_set_status_message(editor_config, "");
+                return Result::Ok(buffer);
+            }
+            _ => continue,
+        }
+    }
+}
 
 /// Moves the cursor within the bounds of the file. Contrary to the original
 /// implementation also triggers a refresh of the scrolling status after the
