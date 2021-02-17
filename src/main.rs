@@ -839,6 +839,33 @@ fn editor_save(editor_config: &mut EditorConfig) -> Result<(), Error> {
     Result::Ok(())
 }
 
+/*** find ***/
+
+/// char *query = editorPrompt("Search: %s (ESC to cancel)");
+/// if (query == NULL) return;
+/// int i;
+/// for (i = 0; i < E.numrows; i++) {
+///   erow *row = &E.row[i];
+///   char *match = strstr(row->render, query);
+///   if (match) {
+///     E.cy = i;
+///     E.cx = match - row->render;
+///     E.rowoff = E.numrows;
+///     break;
+///   }
+/// }
+/// free(query);
+fn editor_find(editor_config: &mut EditorConfig) -> Result<Option<(usize, usize)>, Error> {
+    if let Some(query) = editor_prompt(editor_config, "Search with Enter, cancel with Ctrl-g: ")? {
+        for (cy, row) in editor_config.rows.iter().enumerate() {
+            if let Some(cx) = row.render.find(&query) {
+                return Result::Ok(Some((cx, cy)));
+            }
+        }
+    }
+    Result::Ok(None)
+}
+
 /*** output ***/
 /// E.rx = 0;
 /// if (E.cy < E.numrows) {
