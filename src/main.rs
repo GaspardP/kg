@@ -461,6 +461,111 @@ fn editor_row_cx_to_rx(chars: &str, cx: u16) -> u16 {
     rx
 }
 
+/// int cur_rx = 0;
+/// int cx;
+/// for (cx = 0; cx < row->size; cx++) {
+///   if (row->chars[cx] == '\t')
+///     cur_rx += (KILO_TAB_STOP - 1) - (cur_rx % KILO_TAB_STOP);
+///   cur_rx++;
+///   if (cur_rx > rx) return cx;
+/// }
+/// return cx;
+fn editor_row_rx_to_cx(chars: &str, rx: u16) -> u16 {
+    use std::convert::TryFrom;
+
+    let mut r = 0;
+    for (cx, c) in chars.char_indices() {
+        if '\t' == c {
+            r += TAB_STOP - (r % TAB_STOP);
+        } else {
+            r += 1;
+        }
+
+        if rx < r {
+            return u16::try_from(cx).unwrap_or(u16::MAX);
+        }
+    }
+    u16::try_from(chars.len()).unwrap_or(u16::MAX)
+}
+
+/// Test cx <-> rx conversions for possible positions while moving (left or
+/// right) on a line. The conversion does not take into account "in between"
+/// positions that could result from moving up/down.
+#[cfg(test)]
+mod tests_cx_rx_conversions {
+    use super::*;
+    #[test]
+    fn test1_editor_cx_to_rx() {
+        let chars = "	1";
+        assert_eq!(0, editor_row_cx_to_rx(chars, 0));
+        assert_eq!(TAB_STOP, editor_row_cx_to_rx(chars, 1));
+        assert_eq!(TAB_STOP + 1, editor_row_cx_to_rx(chars, 2));
+        assert_eq!(TAB_STOP + 1, editor_row_cx_to_rx(chars, 3));
+
+        let chars = "	1	";
+        assert_eq!(0, editor_row_cx_to_rx(chars, 0));
+        assert_eq!(TAB_STOP, editor_row_cx_to_rx(chars, 1));
+        assert_eq!(TAB_STOP + 1, editor_row_cx_to_rx(chars, 2));
+        assert_eq!(2 * TAB_STOP, editor_row_cx_to_rx(chars, 3));
+
+        let chars = "12	456	8";
+        assert_eq!(0, editor_row_cx_to_rx(chars, 0));
+        assert_eq!(1, editor_row_cx_to_rx(chars, 1));
+        assert_eq!(2, editor_row_cx_to_rx(chars, 2));
+        assert_eq!(TAB_STOP, editor_row_cx_to_rx(chars, 3));
+        assert_eq!(1 + TAB_STOP, editor_row_cx_to_rx(chars, 4));
+        assert_eq!(2 + TAB_STOP, editor_row_cx_to_rx(chars, 5));
+        assert_eq!(3 + TAB_STOP, editor_row_cx_to_rx(chars, 6));
+        assert_eq!(2 * TAB_STOP, editor_row_cx_to_rx(chars, 7));
+        assert_eq!(1 + 2 * TAB_STOP, editor_row_cx_to_rx(chars, 8));
+    }
+
+    #[test]
+    fn test2_editor_rx_to_cx() {
+        let chars = "	1";
+        assert_eq!(0, editor_row_rx_to_cx(chars, 0));
+        assert_eq!(1, editor_row_rx_to_cx(chars, TAB_STOP));
+        assert_eq!(2, editor_row_rx_to_cx(chars, 1 + TAB_STOP));
+
+        let chars = "12	";
+        assert_eq!(0, editor_row_rx_to_cx(chars, 0));
+        assert_eq!(1, editor_row_rx_to_cx(chars, 1));
+        assert_eq!(2, editor_row_rx_to_cx(chars, 2));
+        assert_eq!(3, editor_row_rx_to_cx(chars, 2 + TAB_STOP));
+
+        let chars = "	1	";
+        assert_eq!(0, editor_row_rx_to_cx(chars, 0));
+        assert_eq!(1, editor_row_rx_to_cx(chars, TAB_STOP));
+        assert_eq!(2, editor_row_rx_to_cx(chars, 1 + TAB_STOP));
+        assert_eq!(3, editor_row_rx_to_cx(chars, 2 * TAB_STOP));
+    }
+
+    #[test]
+    fn test3_editor_cx_to_rx_to_cx() {
+        let chars = "	1";
+        assert_eq!(0, editor_row_rx_to_cx(chars, editor_row_cx_to_rx(chars, 0)));
+        assert_eq!(1, editor_row_rx_to_cx(chars, editor_row_cx_to_rx(chars, 1)));
+        assert_eq!(2, editor_row_rx_to_cx(chars, editor_row_cx_to_rx(chars, 2)));
+
+        let chars = "	1	";
+        assert_eq!(0, editor_row_rx_to_cx(chars, editor_row_cx_to_rx(chars, 0)));
+        assert_eq!(1, editor_row_rx_to_cx(chars, editor_row_cx_to_rx(chars, 1)));
+        assert_eq!(2, editor_row_rx_to_cx(chars, editor_row_cx_to_rx(chars, 2)));
+        assert_eq!(3, editor_row_rx_to_cx(chars, editor_row_cx_to_rx(chars, 3)));
+
+        let chars = "12	456	8";
+        assert_eq!(0, editor_row_rx_to_cx(chars, editor_row_cx_to_rx(chars, 0)));
+        assert_eq!(1, editor_row_rx_to_cx(chars, editor_row_cx_to_rx(chars, 1)));
+        assert_eq!(2, editor_row_rx_to_cx(chars, editor_row_cx_to_rx(chars, 2)));
+        assert_eq!(3, editor_row_rx_to_cx(chars, editor_row_cx_to_rx(chars, 3)));
+        assert_eq!(4, editor_row_rx_to_cx(chars, editor_row_cx_to_rx(chars, 4)));
+        assert_eq!(5, editor_row_rx_to_cx(chars, editor_row_cx_to_rx(chars, 5)));
+        assert_eq!(6, editor_row_rx_to_cx(chars, editor_row_cx_to_rx(chars, 6)));
+        assert_eq!(7, editor_row_rx_to_cx(chars, editor_row_cx_to_rx(chars, 7)));
+        assert_eq!(8, editor_row_rx_to_cx(chars, editor_row_cx_to_rx(chars, 8)));
+    }
+}
+
 /// Replaces tabs with enough spaces to reach the next tab stop. This way the
 /// tab's display size can be controlled by the editor instead of using on the
 /// size set by the terminal.
@@ -501,8 +606,10 @@ fn editor_update_row(tab_stop: u16, line: &str) -> String {
     s
 }
 
+/// Test the conversion of '\t' characters to spaces depending on the tabstop
+/// parameter.
 #[cfg(test)]
-mod tests {
+mod tests_update_row {
     use super::*;
     #[test]
     fn test40_editor_update_row() {
