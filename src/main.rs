@@ -107,6 +107,7 @@ enum Event {
     CursorMove(Direction, u16),
     DeleteBackwardChar,
     DeleteForwardChar,
+    Find,
     InsertChar(char),
     InsertNewline,
     None,
@@ -956,16 +957,22 @@ fn editor_save(editor_config: &mut EditorConfig) -> Result<(), Error> {
 ///   char *match = strstr(row->render, query);
 ///   if (match) {
 ///     E.cy = i;
-///     E.cx = match - row->render;
+///     E.cx = editorRowRxToCx(row, match - row->render);
 ///     E.rowoff = E.numrows;
 ///     break;
 ///   }
 /// }
 /// free(query);
-fn editor_find(editor_config: &mut EditorConfig) -> Result<Option<(usize, usize)>, Error> {
+fn editor_find(editor_config: &mut EditorConfig) -> Result<Option<(u16, u16)>, Error> {
+    use std::convert::TryFrom;
+
     if let Some(query) = editor_prompt(editor_config, "Search with Enter, cancel with Ctrl-g: ")? {
         for (cy, row) in editor_config.rows.iter().enumerate() {
-            if let Some(cx) = row.render.find(&query) {
+            let cy = u16::try_from(cy).unwrap_or(u16::MAX);
+
+            if let Some(rx) = row.render.find(&query) {
+                let rx = u16::try_from(rx).unwrap_or(u16::MAX);
+                let cx = editor_row_rx_to_cx(&row.chars, rx);
                 return Result::Ok(Some((cx, cy)));
             }
         }
@@ -1407,6 +1414,9 @@ fn editor_move_cursor(editor_config: &mut EditorConfig, direction: &Direction, t
 ///     if (E.cy < E.numrows)
 ///       E.cx = E.row[E.cy].size;
 ///     break;
+///   case CTRL_KEY('f'):
+///     editorFind();
+///     break;
 ///   case BACKSPACE:
 ///   case CTRL_KEY('h'):
 ///   case DEL_KEY:
@@ -1455,6 +1465,7 @@ fn editor_process_keypress(editor_config: &EditorConfig) -> Result<Event, Error>
     #[allow(clippy::match_same_arms)]
     let result = match editor_read_key(editor_config)? {
         Key::Arrow(direction) => Event::CursorMove(direction, 1),
+        Key::Ctrl('f') => Event::Find,
         Key::Ctrl('q') => Event::Quit,
         Key::Ctrl('s') => Event::Save,
         Key::Backspace | Key::Ctrl('h') => Event::DeleteBackwardChar,
@@ -1573,6 +1584,14 @@ fn main() -> Result<(), Error> {
             Event::InsertChar(c) => {
                 editor_insert_char(&mut editor_config, c);
                 editor_move_cursor(&mut editor_config, &Direction::Right, 1);
+            }
+            Event::Find => {
+                if let Some(cursor) = editor_find(&mut editor_config)? {
+                    editor_config.cursor = cursor;
+                    editor_scroll(&mut editor_config);
+                } else {
+                    editor_set_status_message(&mut editor_config, "Not found/Cancelled");
+                }
             }
             Event::InsertNewline => {
                 editor_insert_newline(&mut editor_config);
