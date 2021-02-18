@@ -927,7 +927,9 @@ fn editor_save(editor_config: &mut EditorConfig) -> Result<(), Error> {
 
     let filename = if let Some(filename) = &editor_config.filename {
         filename
-    } else if let Some(buffer) = editor_prompt(editor_config, "Save as (C-g to cancel): ")? {
+    } else if let Some(buffer) =
+        editor_prompt(editor_config, "Save as (C-g to cancel): ", Option::None)?
+    {
         editor_config.filename = Some(buffer);
         editor_config.filename.as_ref().unwrap()
     } else {
@@ -966,7 +968,11 @@ fn editor_save(editor_config: &mut EditorConfig) -> Result<(), Error> {
 fn editor_find(editor_config: &mut EditorConfig) -> Result<Option<(u16, u16)>, Error> {
     use std::convert::TryFrom;
 
-    if let Some(query) = editor_prompt(editor_config, "Search with Enter, cancel with Ctrl-g: ")? {
+    if let Some(query) = editor_prompt(
+        editor_config,
+        "Search with Enter, cancel with Ctrl-g: ",
+        Option::None,
+    )? {
         for (cy, row) in editor_config.rows.iter().enumerate() {
             let cy = u16::try_from(cy).unwrap_or(u16::MAX);
 
@@ -1271,7 +1277,11 @@ fn editor_clear_status_message_after_timeout(editor_config: &mut EditorConfig) {
 ///     buf[buflen] = '\0';
 ///   }
 /// }
-fn editor_prompt(editor_config: &mut EditorConfig, prompt: &str) -> Result<Option<String>, Error> {
+fn editor_prompt(
+    editor_config: &mut EditorConfig,
+    prompt: &str,
+    ofn: Option<fn(&str)>,
+) -> Result<Option<String>, Error> {
     let mut buffer = String::with_capacity(128);
     loop {
         editor_set_status_message(editor_config, format!("{}{}", prompt, buffer).as_ref());
@@ -1283,9 +1293,15 @@ fn editor_prompt(editor_config: &mut EditorConfig, prompt: &str) -> Result<Optio
             }
             Key::Enter | Key::Ctrl('m') => {
                 editor_set_status_message(editor_config, "");
+                if let Some(f) = ofn {
+                    f(&buffer);
+                }
                 return Result::Ok(Some(buffer));
             }
             Key::Escape | Key::Ctrl('g') => {
+                if let Some(f) = ofn {
+                    f(&buffer);
+                }
                 return Result::Ok(None);
             }
             _ => continue,
