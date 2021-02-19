@@ -28,6 +28,7 @@ const fn is_ctrl(c: u8) -> bool {
     0x00 == c & CTRL_MASK
 }
 
+#[derive(Debug, std::cmp::PartialEq)]
 enum Direction {
     Down,
     Left,
@@ -35,6 +36,7 @@ enum Direction {
     Up,
 }
 
+#[derive(Debug, std::cmp::PartialEq)]
 enum Key {
     Arrow(Direction),
     Backspace,
@@ -951,8 +953,9 @@ fn editor_save(editor_config: &mut EditorConfig) -> Result<(), Error> {
 
 /*** find ***/
 
-/// char *query = editorPrompt("Search: %s (ESC to cancel)");
-/// if (query == NULL) return;
+/// if (key == '\r' || key == '\x1b') {
+///   return;
+/// }
 /// int i;
 /// for (i = 0; i < E.numrows; i++) {
 ///   erow *row = &E.row[i];
@@ -964,26 +967,37 @@ fn editor_save(editor_config: &mut EditorConfig) -> Result<(), Error> {
 ///     break;
 ///   }
 /// }
-/// free(query);
-fn editor_find(editor_config: &mut EditorConfig) -> Result<Option<(u16, u16)>, Error> {
+fn editor_find_callback(editor_config: &mut EditorConfig, query: &str, key: &Key) {
     use std::convert::TryFrom;
 
-    if let Some(query) = editor_prompt(
-        editor_config,
-        "Search with Enter, cancel with Ctrl-g: ",
-        Option::None,
-    )? {
-        for (cy, row) in editor_config.rows.iter().enumerate() {
-            let cy = u16::try_from(cy).unwrap_or(u16::MAX);
+    if Key::Enter == *key || Key::Escape == *key || Key::Ctrl('g') == *key {
+        return;
+    }
 
-            if let Some(rx) = row.render.find(&query) {
-                let rx = u16::try_from(rx).unwrap_or(u16::MAX);
-                let cx = editor_row_rx_to_cx(&row.chars, rx);
-                return Result::Ok(Some((cx, cy)));
-            }
+    for (cy, row) in editor_config.rows.iter().enumerate() {
+        let cy = u16::try_from(cy).unwrap_or(u16::MAX);
+
+        if let Some(rx) = row.render.find(&query) {
+            let rx = u16::try_from(rx).unwrap_or(u16::MAX);
+            let cx = editor_row_rx_to_cx(&row.chars, rx);
+            editor_config.cursor = (cx, cy);
+            editor_scroll(editor_config);
+            return;
         }
     }
-    Result::Ok(None)
+}
+
+/// char *query = editorPrompt("Search: %s (ESC to cancel)", editorFindCallback);
+/// if (query) {
+///   free(query);
+/// }
+fn editor_find(editor_config: &mut EditorConfig) -> Result<(), Error> {
+    editor_prompt(
+        editor_config,
+        "Search with Enter, cancel with Ctrl-g: ",
+        Some(editor_find_callback),
+    )?;
+    Result::Ok(())
 }
 
 /*** output ***/
@@ -1280,13 +1294,14 @@ fn editor_clear_status_message_after_timeout(editor_config: &mut EditorConfig) {
 fn editor_prompt(
     editor_config: &mut EditorConfig,
     prompt: &str,
-    ofn: Option<fn(&str)>,
+    ofn: Option<fn(&mut EditorConfig, &str, &Key)>,
 ) -> Result<Option<String>, Error> {
     let mut buffer = String::with_capacity(128);
     loop {
         editor_set_status_message(editor_config, format!("{}{}", prompt, buffer).as_ref());
         editor_refresh_screen(editor_config)?;
-        match editor_read_key(editor_config)? {
+        let key = editor_read_key(editor_config)?;
+        match key {
             Key::Char(c) => buffer.push(c),
             Key::Backspace | Key::Ctrl('h') => {
                 buffer.pop();
@@ -1294,17 +1309,21 @@ fn editor_prompt(
             Key::Enter | Key::Ctrl('m') => {
                 editor_set_status_message(editor_config, "");
                 if let Some(f) = ofn {
-                    f(&buffer);
+                    f(editor_config, &buffer, &Key::Enter);
                 }
                 return Result::Ok(Some(buffer));
             }
             Key::Escape | Key::Ctrl('g') => {
                 if let Some(f) = ofn {
-                    f(&buffer);
+                    f(editor_config, &buffer, &Key::Escape);
                 }
                 return Result::Ok(None);
             }
-            _ => continue,
+            _ => (),
+        }
+
+        if let Some(f) = ofn {
+            f(editor_config, &buffer, &key);
         }
     }
 }
@@ -1602,12 +1621,7 @@ fn main() -> Result<(), Error> {
                 editor_move_cursor(&mut editor_config, &Direction::Right, 1);
             }
             Event::Find => {
-                if let Some(cursor) = editor_find(&mut editor_config)? {
-                    editor_config.cursor = cursor;
-                    editor_scroll(&mut editor_config);
-                } else {
-                    editor_set_status_message(&mut editor_config, "Not found/Cancelled");
-                }
+                editor_find(&mut editor_config)?;
             }
             Event::InsertNewline => {
                 editor_insert_newline(&mut editor_config);
