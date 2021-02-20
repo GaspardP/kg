@@ -987,16 +987,34 @@ fn editor_find_callback(editor_config: &mut EditorConfig, query: &str, key: &Key
     }
 }
 
+/// int saved_cx = E.cx;
+/// int saved_cy = E.cy;
+/// int saved_coloff = E.coloff;
+/// int saved_rowoff = E.rowoff;
 /// char *query = editorPrompt("Search: %s (ESC to cancel)", editorFindCallback);
 /// if (query) {
 ///   free(query);
+/// } else {
+///   E.cx = saved_cx;
+///   E.cy = saved_cy;
+///   E.coloff = saved_coloff;
+///   E.rowoff = saved_rowoff;
 /// }
 fn editor_find(editor_config: &mut EditorConfig) -> Result<(), Error> {
-    editor_prompt(
+    let cursor = editor_config.cursor;
+    let query = editor_prompt(
         editor_config,
-        "Search with Enter, cancel with Ctrl-g: ",
+        "Search (Ctrl-g to cancel): ",
         Some(editor_find_callback),
     )?;
+    // Query was empty or cancelled, resetting cursor to its original position
+    if query.is_none() {
+        editor_config.cursor = cursor;
+        editor_scroll(editor_config);
+        editor_set_status_message(editor_config, "Quit");
+    } else {
+        editor_set_status_message(editor_config, "");
+    }
     Result::Ok(())
 }
 
