@@ -974,16 +974,23 @@ fn editor_find_callback(editor_config: &mut EditorConfig, query: &str, key: &Key
         return;
     }
 
-    for (cy, row) in editor_config.rows.iter().enumerate() {
-        let cy = u16::try_from(cy).unwrap_or(u16::MAX);
+    let matches: Vec<(&ERow, u16, u16)> = editor_config
+        .rows
+        .iter()
+        .enumerate()
+        .filter_map(|(cy, row)| {
+            let cy = u16::try_from(cy).unwrap_or(u16::MAX);
+            row.render.find(&query).map(|rx| {
+                let rx = u16::try_from(rx).unwrap_or(u16::MAX);
+                (row, rx, cy)
+            })
+        })
+        .collect();
 
-        if let Some(rx) = row.render.find(&query) {
-            let rx = u16::try_from(rx).unwrap_or(u16::MAX);
-            let cx = editor_row_rx_to_cx(&row.chars, rx);
-            editor_config.cursor = (cx, cy);
-            editor_scroll(editor_config);
-            return;
-        }
+    if let Some((row, rx, cy)) = matches.get(0) {
+        let cx = editor_row_rx_to_cx(&row.chars, *rx);
+        editor_config.cursor = (cx, *cy);
+        editor_scroll(editor_config);
     }
 }
 
