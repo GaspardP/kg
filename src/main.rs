@@ -130,14 +130,22 @@ enum Event {
     Save,
 }
 
+#[derive(Clone, Copy)]
+enum Highlight {
+    Normal,
+    Number,
+}
+
 /// typedef struct erow {
 ///   int size;
 ///   int rsize;
 ///   char *chars;
 ///   char *render;
+///   unsigned char *hl;
 /// } erow;
 struct ERow {
     chars: String,
+    hl: Vec<Highlight>,
     render: String,
 }
 
@@ -447,6 +455,40 @@ fn get_window_size(stdin: RawFd, stdout: RawFd) -> Result<(u16, u16), Error> {
     }
 }
 
+/*** syntax highlighting ***/
+
+/// row->hl = realloc(row->hl, row->rsize);
+/// memset(row->hl, HL_NORMAL, row->rsize);
+/// int i;
+/// for (i = 0; i < row->rsize; i++) {
+///   if (isdigit(row->render[i])) {
+///     row->hl[i] = HL_NUMBER;
+///   }
+/// }
+fn editor_update_syntax(render: &str) -> Vec<Highlight> {
+    let mut hl = vec![Highlight::Normal; render.len()];
+    for (i, c) in render.chars().enumerate() {
+        if c.is_digit(10) {
+            hl[i] = Highlight::Number;
+        }
+    }
+    hl
+}
+
+/// switch (hl) {
+///   case HL_NUMBER: return 31;
+///   default: return 37;
+/// }
+fn editor_syntax_to_color(h: Highlight) -> &'static [u8] {
+    use colors::{DEFAULT_FOREGROUND, RED_FOREGROUND};
+    use Highlight::{Normal, Number};
+
+    match h {
+        Normal => DEFAULT_FOREGROUND,
+        Number => RED_FOREGROUND,
+    }
+}
+
 /*** row operation ***/
 
 /// Converts a `chars` index into a `render` index. For each tab characters
@@ -721,6 +763,7 @@ fn editor_row_insert_char(row: &mut ERow, at: usize, c: char) {
 fn editor_row_append_string(row: &mut ERow, s: &str) {
     row.chars.push_str(s);
     row.render = editor_update_row(TAB_STOP, &row.chars);
+    row.hl = editor_update_syntax(&row.render);
 }
 
 /// Removes the character on the left of the cursor.
@@ -736,6 +779,7 @@ fn editor_row_delete_char(row: &mut ERow, at: usize) {
     }
     row.chars.remove(at - 1);
     row.render = editor_update_row(TAB_STOP, &row.chars);
+    row.hl = editor_update_syntax(&row.render);
 }
 
 /*** editor operations ***/
@@ -757,11 +801,10 @@ fn editor_insert_char(editor_config: &mut EditorConfig, c: char) {
     let cx = cursor_x as usize;
     let cy = cursor_y as usize;
     if editor_config.rows.len() == cy {
-        let cs = c.to_string();
-        editor_config.rows.push(ERow {
-            render: editor_update_row(TAB_STOP, &cs),
-            chars: cs,
-        });
+        let chars = c.to_string();
+        let render = editor_update_row(TAB_STOP, &chars);
+        let hl = editor_update_syntax(&render);
+        editor_config.rows.push(ERow { chars, hl, render });
     } else if let Some(row) = editor_config.rows.get_mut(cy) {
         editor_row_insert_char(row, cx, c);
     }
@@ -788,20 +831,21 @@ fn editor_insert_newline(editor_config: &mut EditorConfig) {
             cy,
             ERow {
                 chars: "".to_string(),
+                hl: Vec::new(),
                 render: "".to_string(),
             },
         );
     } else if let Some(mut row) = editor_config.rows.get_mut(cy) {
         let cx = cursor_x as usize;
-        let new_line = row.chars.split_off(cx);
+        let chars = row.chars.split_off(cx);
         row.render = editor_update_row(TAB_STOP, &row.chars);
-        editor_config.rows.insert(
-            cy + 1,
-            ERow {
-                render: editor_update_row(TAB_STOP, &new_line),
-                chars: new_line,
-            },
-        );
+        row.hl = editor_update_syntax(&row.render);
+        // New line
+        let render = editor_update_row(TAB_STOP, &chars);
+        let hl = editor_update_syntax(&render);
+        editor_config
+            .rows
+            .insert(cy + 1, ERow { chars, hl, render });
     }
 }
 
@@ -900,11 +944,10 @@ fn editor_open(editor_config: &mut EditorConfig, filename: &str) -> Result<(), E
     let reader = BufReader::new(file);
     let mut lines = reader.lines();
 
-    while let Some(Ok(line)) = lines.next() {
-        editor_config.rows.push(ERow {
-            render: editor_update_row(TAB_STOP, &line),
-            chars: line,
-        });
+    while let Some(Ok(chars)) = lines.next() {
+        let render = editor_update_row(TAB_STOP, &chars);
+        let hl = editor_update_syntax(&render);
+        editor_config.rows.push(ERow { chars, hl, render });
     }
 
     editor_config.dirty = false;
@@ -1152,16 +1195,21 @@ fn editor_scroll(editor_config: &mut EditorConfig) {
 ///     if (len < 0) len = 0;
 ///     if (len > E.screencols) len = E.screencols;
 ///     char *c = &E.row[filerow].render[E.coloff];
+///     unsigned char *hl = &E.row[filerow].hl[E.coloff];
 ///     int j;
 ///     for (j = 0; j < len; j++) {
-///       if (isdigit(c[j])) {
-///         abAppend(ab, "\x1b[31m", 5);
-///         abAppend(ab, &c[j], 1);
+///       if (hl[j] == HL_NORMAL) {
 ///         abAppend(ab, "\x1b[39m", 5);
+///         abAppend(ab, &c[j], 1);
 ///       } else {
+///         int color = editorSyntaxToColor(hl[j]);
+///         char buf[16];
+///         int clen = snprintf(buf, sizeof(buf), "\x1b[%dm", color);
+///         abAppend(ab, buf, clen);
 ///         abAppend(ab, &c[j], 1);
 ///       }
 ///     }
+///     abAppend(ab, "\x1b[39m", 5);
 ///   }
 ///   abAppend(ab, "\x1b[K", 3);
 ///   abAppend(ab, "\r\n", 2);
@@ -1177,19 +1225,16 @@ fn editor_draw_rows(editor_config: &EditorConfig, ab: &mut Vec<u8>) {
     for y in 0..(screen_rows) {
         let file_row = y + row_offset;
         let file_col = col_offset;
-        if let Some(erow) = rows.get(file_row) {
-            let line = &erow.render;
+        if let Some(row) = rows.get(file_row) {
+            let line = &row.render;
+            let hl = &row.hl;
             let line_begin = min(file_col, line.len());
             let line_end = min(line.len(), screen_cols + file_col);
-            for b in line.get(line_begin..line_end).unwrap_or("").bytes() {
-                if (b as char).is_digit(10) {
-                    ab.extend(colors::RED_FOREGROUND);
-                    ab.push(b);
-                    ab.extend(colors::DEFAULT_FOREGROUND);
-                } else {
-                    ab.push(b);
-                }
+            for (i, b) in line[line_begin..line_end].bytes().enumerate() {
+                ab.extend(editor_syntax_to_color(hl[line_begin + i]));
+                ab.push(b);
             }
+            ab.extend(colors::DEFAULT_FOREGROUND);
         } else if rows.is_empty() && y == screen_rows / 3 {
             let welcome = format!("{} editor -- version {}", PKG_NAME, PKG_VERSION);
             let truncate = min(welcome.len(), screen_cols);
