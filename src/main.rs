@@ -953,15 +953,36 @@ fn editor_save(editor_config: &mut EditorConfig) -> Result<(), Error> {
 
 /*** find ***/
 
+/// "Dumb" implementation that will iterate over all the lines of the files for
+/// each new call. Iterates over all the matches found before selecting the next
+/// cursor position instead of stopping at the first good match.
+/// ---
+/// static int last_match = -1;
+/// static int direction = 1;
 /// if (key == '\r' || key == '\x1b') {
+///   last_match = -1;
+///   direction = 1;
 ///   return;
+/// } else if (key == ARROW_RIGHT || key == ARROW_DOWN) {
+///   direction = 1;
+/// } else if (key == ARROW_LEFT || key == ARROW_UP) {
+///   direction = -1;
+/// } else {
+///   last_match = -1;
+///   direction = 1;
 /// }
+/// if (last_match == -1) direction = 1;
+/// int current = last_match;
 /// int i;
 /// for (i = 0; i < E.numrows; i++) {
-///   erow *row = &E.row[i];
+///   current += direction;
+///   if (current == -1) current = E.numrows - 1;
+///   else if (current == E.numrows) current = 0;
+///   erow *row = &E.row[current];
 ///   char *match = strstr(row->render, query);
 ///   if (match) {
-///     E.cy = i;
+///     last_match = current;
+///     E.cy = current;
 ///     E.cx = editorRowRxToCx(row, match - row->render);
 ///     E.rowoff = E.numrows;
 ///     break;
@@ -974,7 +995,7 @@ fn editor_find_callback(editor_config: &mut EditorConfig, query: &str, key: &Key
         return;
     }
 
-    let matches: Vec<(&ERow, u16, u16)> = editor_config
+    let mut matches = editor_config
         .rows
         .iter()
         .enumerate()
@@ -985,20 +1006,37 @@ fn editor_find_callback(editor_config: &mut EditorConfig, query: &str, key: &Key
                 (row, rx, cy)
             })
         })
-        .collect();
+        .map(|(row, rx, cy)| {
+            let cx = editor_row_rx_to_cx(&row.chars, rx);
+            (cx, cy)
+        });
 
-    if let Some((row, rx, cy)) = matches.get(0) {
-        let cx = editor_row_rx_to_cx(&row.chars, *rx);
-        editor_config.cursor = (cx, *cy);
-        editor_scroll(editor_config);
-    }
+    let cursor = editor_config.cursor;
+    let (cx, cy) = cursor;
+    editor_config.cursor = match key {
+        // Find the last march located before the cursor
+        Key::Arrow(Direction::Up) => matches
+            .filter(|(x, y)| (*y < cy) || (*y == cy && *x < cx))
+            .last()
+            .unwrap_or(cursor),
+        // Find the first match located after the cursor
+        Key::Arrow(Direction::Down) => matches
+            .find(|(x, y)| (cy < *y) || (cy == *y && cx < *x))
+            .unwrap_or(cursor),
+        // Find a match at the current cursor or after it
+        _ => matches
+            .find(|(x, y)| cx <= *x && cy <= *y)
+            .unwrap_or(cursor),
+    };
+    editor_scroll(editor_config);
 }
 
 /// int saved_cx = E.cx;
 /// int saved_cy = E.cy;
 /// int saved_coloff = E.coloff;
 /// int saved_rowoff = E.rowoff;
-/// char *query = editorPrompt("Search: %s (ESC to cancel)", editorFindCallback);
+/// char *query = editorPrompt("Search: %s (Use ESC/Arrows/Enter)",
+///                            editorFindCallback);
 /// if (query) {
 ///   free(query);
 /// } else {
@@ -1011,7 +1049,7 @@ fn editor_find(editor_config: &mut EditorConfig) -> Result<(), Error> {
     let cursor = editor_config.cursor;
     let query = editor_prompt(
         editor_config,
-        "Search (Ctrl-g to cancel): ",
+        "Search (Use Enter/Arrows/Ctrl-g): ",
         Some(editor_find_callback),
     )?;
     // Query was empty or cancelled, resetting cursor to its original position
