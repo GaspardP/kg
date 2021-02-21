@@ -60,6 +60,19 @@ const INVERT_COLOUR: &[u8; 4] = b"\x1b[7m";
 const NORMAL_FORMAT: &[u8; 3] = b"\x1b[m";
 const SHOW_CURSOR: &[u8; 6] = b"\x1b[?25h";
 
+#[allow(dead_code)]
+mod colors {
+    pub const BLACK_FOREGROUND: &[u8; 9] = b"\x1b[38;5;0m";
+    pub const RED_FOREGROUND: &[u8; 9] = b"\x1b[38;5;1m";
+    pub const GREEN_FOREGROUND: &[u8; 9] = b"\x1b[38;5;2m";
+    pub const YELLOW_FOREGROUND: &[u8; 9] = b"\x1b[38;5;3m";
+    pub const BLUE_FOREGROUND: &[u8; 9] = b"\x1b[38;5;4m";
+    pub const MAGENTA_FOREGROUND: &[u8; 9] = b"\x1b[38;5;5m";
+    pub const CYAN_FOREGROUND: &[u8; 9] = b"\x1b[38;5;6m";
+    pub const WHITE_FOREGROUND: &[u8; 9] = b"\x1b[38;5;7m";
+    pub const DEFAULT_FOREGROUND: &[u8; 5] = b"\x1b[39m";
+}
+
 /*** data ***/
 
 type Line = u32;
@@ -1113,7 +1126,7 @@ fn editor_scroll(editor_config: &mut EditorConfig) {
     }
 }
 
-/// Draws a vertical column of 24 `~`
+/// Draws a vertical column of `~` when the screen is empty
 /// ---
 /// int y;
 /// for (y = 0; y < E.screenrows; y++) {
@@ -1135,15 +1148,23 @@ fn editor_scroll(editor_config: &mut EditorConfig) {
 ///       abAppend(ab, "~", 1);
 ///     }
 ///   } else {
-///     int len = E.row[filerow].size - E.coloff;
+///     int len = E.row[filerow].rsize - E.coloff;
 ///     if (len < 0) len = 0;
 ///     if (len > E.screencols) len = E.screencols;
-///     abAppend(ab, &E.row[filerow].chars[E.coloff], len);
+///     char *c = &E.row[filerow].render[E.coloff];
+///     int j;
+///     for (j = 0; j < len; j++) {
+///       if (isdigit(c[j])) {
+///         abAppend(ab, "\x1b[31m", 5);
+///         abAppend(ab, &c[j], 1);
+///         abAppend(ab, "\x1b[39m", 5);
+///       } else {
+///         abAppend(ab, &c[j], 1);
+///       }
+///     }
 ///   }
 ///   abAppend(ab, "\x1b[K", 3);
-///   if (y < E.screenrows - 1) {
-///     abAppend(ab, "\r\n", 2);
-///   }
+///   abAppend(ab, "\r\n", 2);
 /// }
 fn editor_draw_rows(editor_config: &EditorConfig, ab: &mut Vec<u8>) {
     use std::cmp::Ordering;
@@ -1160,7 +1181,15 @@ fn editor_draw_rows(editor_config: &EditorConfig, ab: &mut Vec<u8>) {
             let line = &erow.render;
             let line_begin = min(file_col, line.len());
             let line_end = min(line.len(), screen_cols + file_col);
-            ab.extend(&line.as_bytes()[line_begin..line_end]);
+            for b in line.get(line_begin..line_end).unwrap_or("").bytes() {
+                if (b as char).is_digit(10) {
+                    ab.extend(colors::RED_FOREGROUND);
+                    ab.push(b);
+                    ab.extend(colors::DEFAULT_FOREGROUND);
+                } else {
+                    ab.push(b);
+                }
+            }
         } else if rows.is_empty() && y == screen_rows / 3 {
             let welcome = format!("{} editor -- version {}", PKG_NAME, PKG_VERSION);
             let truncate = min(welcome.len(), screen_cols);
