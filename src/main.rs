@@ -132,6 +132,7 @@ enum Event {
 
 #[derive(Clone, Copy, std::cmp::PartialEq)]
 enum Highlight {
+    Match,
     Normal,
     Number,
 }
@@ -477,13 +478,15 @@ fn editor_update_syntax(render: &str) -> Vec<Highlight> {
 
 /// switch (hl) {
 ///   case HL_NUMBER: return 31;
+///   case HL_MATCH: return 34;
 ///   default: return 37;
 /// }
 fn editor_syntax_to_color(h: Highlight) -> &'static [u8] {
-    use colors::{DEFAULT_FOREGROUND, RED_FOREGROUND};
-    use Highlight::{Normal, Number};
+    use colors::{BLUE_FOREGROUND, DEFAULT_FOREGROUND, RED_FOREGROUND};
+    use Highlight::{Match, Normal, Number};
 
     match h {
+        Match => BLUE_FOREGROUND,
         Normal => DEFAULT_FOREGROUND,
         Number => RED_FOREGROUND,
     }
@@ -1042,6 +1045,7 @@ fn editor_save(editor_config: &mut EditorConfig) -> Result<(), Error> {
 ///     E.cy = current;
 ///     E.cx = editorRowRxToCx(row, match - row->render);
 ///     E.rowoff = E.numrows;
+///     memset(&row->hl[match - row->render], HL_MATCH, strlen(query));
 ///     break;
 ///   }
 /// }
@@ -1052,36 +1056,44 @@ fn editor_find_callback(editor_config: &mut EditorConfig, query: &str, key: &Key
         return;
     }
 
-    let mut matches = editor_config
+    let matches = editor_config
         .rows
-        .iter()
+        .iter_mut()
         .enumerate()
-        .filter_map(|(cy, row)| {
-            let cy = u16::try_from(cy).unwrap_or(u16::MAX);
-            row.render.find(&query).map(|rx| {
-                let rx = u16::try_from(rx).unwrap_or(u16::MAX);
-                (row, rx, cy)
-            })
+        .filter_map(|(cy, row)| row.render.find(&query).map(|rx| (row, rx, cy)))
+        .map(|(row, rx, cy)| {
+            // Highlight chars marching the query in the row
+            for i in row.hl.iter_mut().skip(rx).take(query.len()) {
+                *i = Highlight::Match;
+            }
+            (row, rx, cy)
         })
         .map(|(row, rx, cy)| {
-            let cx = editor_row_rx_to_cx(&row.chars, rx);
-            (cx, cy)
+            let cy = u16::try_from(cy).unwrap_or(u16::MAX);
+            let rx = u16::try_from(rx).unwrap_or(u16::MAX);
+            (row, rx, cy)
         });
+
+    // `find` expects a mutable iterator
+    let mut match_locations = matches.map(|(row, rx, cy)| {
+        let cx = editor_row_rx_to_cx(&row.chars, rx);
+        (cx, cy)
+    });
 
     let cursor = editor_config.cursor;
     let (cx, cy) = cursor;
     editor_config.cursor = match key {
         // Find the last march located before the cursor
-        Key::Arrow(Direction::Up) => matches
+        Key::Arrow(Direction::Up) => match_locations
             .filter(|(x, y)| (*y < cy) || (*y == cy && *x < cx))
             .last()
             .unwrap_or(cursor),
         // Find the first match located after the cursor
-        Key::Arrow(Direction::Down) => matches
+        Key::Arrow(Direction::Down) => match_locations
             .find(|(x, y)| (cy < *y) || (cy == *y && cx < *x))
             .unwrap_or(cursor),
         // Find a match at the current cursor or after it
-        _ => matches
+        _ => match_locations
             .find(|(x, y)| cx <= *x && cy <= *y)
             .unwrap_or(cursor),
     };
