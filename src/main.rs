@@ -990,7 +990,7 @@ fn editor_save(editor_config: &mut EditorConfig) -> Result<(), Error> {
     let filename = if let Some(filename) = &editor_config.filename {
         filename
     } else if let Some(buffer) =
-        editor_prompt(editor_config, "Save as (C-g to cancel): ", Option::None)?
+        editor_prompt(editor_config, "Save as (C-g to cancel): ", |_, _, _| {})?
     {
         editor_config.filename = Some(buffer);
         editor_config.filename.as_ref().unwrap()
@@ -1015,10 +1015,17 @@ fn editor_save(editor_config: &mut EditorConfig) -> Result<(), Error> {
 
 /// "Dumb" implementation that will iterate over all the lines of the files for
 /// each new call. Iterates over all the matches found before selecting the next
-/// cursor position instead of stopping at the first good match.
+/// cursor position to colour all the items matching the query.
 /// ---
 /// static int last_match = -1;
 /// static int direction = 1;
+/// static int saved_hl_line;
+/// static char *saved_hl = NULL;
+/// if (saved_hl) {
+///   memcpy(E.row[saved_hl_line].hl, saved_hl, E.row[saved_hl_line].rsize);
+///   free(saved_hl);
+///   saved_hl = NULL;
+/// }
 /// if (key == '\r' || key == '\x1b') {
 ///   last_match = -1;
 ///   direction = 1;
@@ -1045,6 +1052,9 @@ fn editor_save(editor_config: &mut EditorConfig) -> Result<(), Error> {
 ///     E.cy = current;
 ///     E.cx = editorRowRxToCx(row, match - row->render);
 ///     E.rowoff = E.numrows;
+///     saved_hl_line = current;
+///     saved_hl = malloc(row->rsize);
+///     memcpy(saved_hl, row->hl, row->rsize);
 ///     memset(&row->hl[match - row->render], HL_MATCH, strlen(query));
 ///     break;
 ///   }
@@ -1056,7 +1066,7 @@ fn editor_find_callback(editor_config: &mut EditorConfig, query: &str, key: &Key
         return;
     }
 
-    let matches = editor_config
+    let matches: Vec<(u16, u16)> = editor_config
         .rows
         .iter_mut()
         .enumerate()
@@ -1072,14 +1082,14 @@ fn editor_find_callback(editor_config: &mut EditorConfig, query: &str, key: &Key
             let cy = u16::try_from(cy).unwrap_or(u16::MAX);
             let rx = u16::try_from(rx).unwrap_or(u16::MAX);
             (row, rx, cy)
-        });
+        })
+        .map(|(row, rx, cy)| {
+            let cx = editor_row_rx_to_cx(&row.chars, rx);
+            (cx, cy)
+        })
+        .collect();
 
-    // `find` expects a mutable iterator
-    let mut match_locations = matches.map(|(row, rx, cy)| {
-        let cx = editor_row_rx_to_cx(&row.chars, rx);
-        (cx, cy)
-    });
-
+    let mut match_locations = matches.iter().copied();
     let cursor = editor_config.cursor;
     let (cx, cy) = cursor;
     editor_config.cursor = match key {
@@ -1116,10 +1126,23 @@ fn editor_find_callback(editor_config: &mut EditorConfig, query: &str, key: &Key
 /// }
 fn editor_find(editor_config: &mut EditorConfig) -> Result<(), Error> {
     let cursor = editor_config.cursor;
+    let hls: Vec<Vec<Highlight>> = editor_config
+        .rows
+        .iter()
+        .map(|row| row.hl.clone())
+        .collect();
+
     let query = editor_prompt(
         editor_config,
         "Search (Use Enter/Arrows/Ctrl-g): ",
-        Some(editor_find_callback),
+        |e, q, k| {
+            // Reset highlights to default before searching and applying new
+            // Match highlight
+            for (row, hl) in e.rows.iter_mut().zip(hls.iter()) {
+                row.hl = hl.clone();
+            }
+            editor_find_callback(e, q, k);
+        },
     )?;
     // Query was empty or cancelled, resetting cursor to its original position
     if query.is_none() {
@@ -1452,11 +1475,14 @@ fn editor_clear_status_message_after_timeout(editor_config: &mut EditorConfig) {
 ///     buf[buflen] = '\0';
 ///   }
 /// }
-fn editor_prompt(
+fn editor_prompt<Callback>(
     editor_config: &mut EditorConfig,
     prompt: &str,
-    ofn: Option<fn(&mut EditorConfig, &str, &Key)>,
-) -> Result<Option<String>, Error> {
+    f: Callback,
+) -> Result<Option<String>, Error>
+where
+    Callback: Fn(&mut EditorConfig, &str, &Key),
+{
     let mut buffer = String::with_capacity(128);
     loop {
         editor_set_status_message(editor_config, format!("{}{}", prompt, buffer).as_ref());
@@ -1469,23 +1495,16 @@ fn editor_prompt(
             }
             Key::Enter | Key::Ctrl('m') => {
                 editor_set_status_message(editor_config, "");
-                if let Some(f) = ofn {
-                    f(editor_config, &buffer, &Key::Enter);
-                }
+                f(editor_config, &buffer, &Key::Enter);
                 return Result::Ok(Some(buffer));
             }
             Key::Escape | Key::Ctrl('g') => {
-                if let Some(f) = ofn {
-                    f(editor_config, &buffer, &Key::Escape);
-                }
+                f(editor_config, &buffer, &Key::Escape);
                 return Result::Ok(None);
             }
             _ => (),
         }
-
-        if let Some(f) = ofn {
-            f(editor_config, &buffer, &key);
-        }
+        f(editor_config, &buffer, &key);
     }
 }
 
