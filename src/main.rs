@@ -458,21 +458,48 @@ fn get_window_size(stdin: RawFd, stdout: RawFd) -> Result<(u16, u16), Error> {
 
 /*** syntax highlighting ***/
 
+/// return isspace(c) || c == '\0' || strchr(",.()+-/*=~%<>[];", c) != NULL;
+fn is_separator(c: char) -> bool {
+    " 	,.()+-/*=~%<>[];".find(c).is_some()
+}
+
 /// row->hl = realloc(row->hl, row->rsize);
 /// memset(row->hl, HL_NORMAL, row->rsize);
-/// int i;
-/// for (i = 0; i < row->rsize; i++) {
-///   if (isdigit(row->render[i])) {
+/// int prev_sep = 1;
+/// int i = 0;
+/// while (i < row->rsize) {
+///   char c = row->render[i];
+///   unsigned char prev_hl = (i > 0) ? row->hl[i - 1] : HL_NORMAL;
+///   if ((isdigit(c) && (prev_sep || prev_hl == HL_NUMBER)) ||
+///       (c == '.' && prev_hl == HL_NUMBER)) {
 ///     row->hl[i] = HL_NUMBER;
+///     i++;
+///     prev_sep = 0;
+///     continue;
 ///   }
+///   prev_sep = is_separator(c);
+///   i++;
 /// }
 fn editor_update_syntax(render: &str) -> Vec<Highlight> {
     let mut hl = vec![Highlight::Normal; render.len()];
+
+    let mut previous_is_separator = true;
+    let mut previous_highlight = Highlight::Normal;
+
     for (i, c) in render.chars().enumerate() {
-        if c.is_digit(10) {
+        let highlight_digits = (c.is_digit(10)
+            && (previous_is_separator || Highlight::Number == previous_highlight))
+            || ('.' == c && Highlight::Number == previous_highlight);
+        if highlight_digits {
             hl[i] = Highlight::Number;
+            previous_highlight = Highlight::Number;
+            previous_is_separator = false;
+        } else {
+            previous_highlight = Highlight::Normal;
+            previous_is_separator = is_separator(c);
         }
     }
+
     hl
 }
 
