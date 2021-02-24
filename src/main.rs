@@ -458,9 +458,15 @@ fn get_window_size(stdin: RawFd, stdout: RawFd) -> Result<(u16, u16), Error> {
 
 /*** syntax highlighting ***/
 
+trait IsSeparator {
+    fn is_separator(&self) -> bool;
+}
+
 /// return isspace(c) || c == '\0' || strchr(",.()+-/*=~%<>[];", c) != NULL;
-fn is_separator(c: char) -> bool {
-    " 	,.()+-/*=~%<>[];".find(c).is_some()
+impl IsSeparator for char {
+    fn is_separator(&self) -> bool {
+        " 	,.()+-/*=~%<>[];".find(*self).is_some()
+    }
 }
 
 /// row->hl = realloc(row->hl, row->rsize);
@@ -496,7 +502,7 @@ fn editor_update_syntax(render: &str) -> Vec<Highlight> {
             previous_is_separator = false;
         } else {
             previous_highlight = Highlight::Normal;
-            previous_is_separator = is_separator(c);
+            previous_is_separator = c.is_separator();
         }
     }
 
