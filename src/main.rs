@@ -73,6 +73,8 @@ mod colors {
     pub const DEFAULT_FOREGROUND: &[u8; 5] = b"\x1b[39m";
 }
 
+const HL_HIGHLIGHT_NUMBERS: u8 = 1 << 0;
+
 /*** data ***/
 
 type Line = u32;
@@ -137,6 +139,20 @@ enum Highlight {
     Number,
 }
 
+/// struct editorSyntax {
+///   char *filetype;
+///   char **filematch;
+///   int flags;
+/// };
+struct EditorSyntax<'a> {
+    /// Name of the type displayed in the  status bar
+    file_type: &'a str,
+    /// Patterns to match the filename against
+    file_match: [&'a str; 1],
+    /// Highlights information for the type
+    flags: u8,
+}
+
 /// typedef struct erow {
 ///   int size;
 ///   int rsize;
@@ -156,7 +172,7 @@ struct StatusMessage {
 }
 
 #[allow(dead_code)]
-struct EditorConfig {
+struct EditorConfig<'a> {
     cursor: (u16, u16),  // chars cursor
     rcursor: (u16, u16), // render cursor
     original_termios: Termios,
@@ -170,9 +186,10 @@ struct EditorConfig {
     screen_cols: u16,
     filename: Option<String>,
     status_message: Option<StatusMessage>,
+    syntax: Option<EditorSyntax<'a>>,
 }
 
-impl Drop for EditorConfig {
+impl Drop for EditorConfig<'_> {
     fn drop(&mut self) {
         match write(self.stdout, CLEAR_SCREEN) {
             Ok(_) => (),
@@ -185,6 +202,24 @@ impl Drop for EditorConfig {
         disable_raw_mode(self.stdin, self.original_termios).expect("Couldn't disable raw mode");
     }
 }
+
+/*** filetypes ***/
+
+/// char *C_HL_extensions[] = { ".c", ".h", ".cpp", NULL };
+const RS_HL_EXT: [&str; 1] = ["rs"];
+
+/// struct editorSyntax HLDB[] = {
+///   {
+///     "c",
+///     C_HL_extensions,
+///     HL_HIGHLIGHT_NUMBERS
+///   },
+/// };
+const HLDB: [EditorSyntax; 1] = [EditorSyntax {
+    file_type: "rust",
+    file_match: RS_HL_EXT,
+    flags: HL_HIGHLIGHT_NUMBERS,
+}];
 
 /*** terminal ***/
 
@@ -1344,10 +1379,11 @@ fn editor_draw_rows(editor_config: &EditorConfig, ab: &mut Vec<u8>) {
 
 /// abAppend(ab, "\x1b[7m", 4);
 /// char status[80], rstatus[80];
-/// int len = snprintf(status, sizeof(status), "%.20s - %d lines",
-///   E.filename ? E.filename : "[No Name]", E.numrows);
-/// int rlen = snprintf(rstatus, sizeof(rstatus), "%d/%d",
-///   E.cy + 1, E.numrows);
+/// int len = snprintf(status, sizeof(status), "%.20s - %d lines %s",
+///   E.filename ? E.filename : "[No Name]", E.numrows,
+///   E.dirty ? "(modified)" : "");
+/// int rlen = snprintf(rstatus, sizeof(rstatus), "%s | %d/%d",
+///   E.syntax ? E.syntax->filetype : "no ft", E.cy + 1, E.numrows);
 /// if (len > E.screencols) len = E.screencols;
 /// abAppend(ab, status, len);
 /// while (len < E.screencols) {
@@ -1383,12 +1419,16 @@ fn editor_draw_status_bar(editor_config: &EditorConfig, ab: &mut Vec<u8>) {
         lines_info = lines_info,
         dirty = dirty,
     );
-    let position = format!("{}/{}", cy + 1, numrows);
+    let mode = editor_config
+        .syntax
+        .as_ref()
+        .map_or("unknown", |syntax| syntax.file_type);
+    let mode_position = format!("{} | {}/{}", mode, cy + 1, numrows);
     let padding = width.saturating_sub(file_info.len());
     let status = format!(
-        "{file_info}{position:>padding$}",
+        "{file_info}{mode_position:>padding$}",
         file_info = file_info,
-        position = position,
+        mode_position = mode_position,
         padding = padding,
     );
     let padded_status = format!("{status:.width$}", status = status, width = width);
@@ -1758,7 +1798,7 @@ fn editor_process_keypress(editor_config: &EditorConfig) -> Result<Event, Error>
 /// E.row = NULL;
 /// if (getWindowSize(&E.screenrows, &E.screencols) == -1) die("getWindowSize");
 /// E.screenrows -= 2;
-fn init_editor(stdin: RawFd, stdout: RawFd) -> Result<EditorConfig, Error> {
+fn init_editor(stdin: RawFd, stdout: RawFd) -> Result<EditorConfig<'static>, Error> {
     let original_termios = Termios::from_fd(stdin)?;
     enable_raw_mode(stdin, original_termios)?;
     let (screen_rows, screen_cols) = get_window_size(stdin, stdout)?;
@@ -1776,6 +1816,7 @@ fn init_editor(stdin: RawFd, stdout: RawFd) -> Result<EditorConfig, Error> {
         screen_cols,
         filename: Option::None,
         status_message: Option::None,
+        syntax: Option::None,
     };
     Result::Ok(editor_config)
 }
