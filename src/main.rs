@@ -186,7 +186,7 @@ struct EditorConfig<'a> {
     screen_cols: u16,
     filename: Option<String>,
     status_message: Option<StatusMessage>,
-    syntax: Option<EditorSyntax<'a>>,
+    syntax: Option<&'a EditorSyntax<'a>>,
 }
 
 impl Drop for EditorConfig<'_> {
@@ -521,16 +521,23 @@ impl IsSeparator for char {
 ///   prev_sep = is_separator(c);
 ///   i++;
 /// }
-fn editor_update_syntax(render: &str) -> Vec<Highlight> {
+fn editor_update_syntax(syntax_opt: Option<&EditorSyntax>, render: &str) -> Vec<Highlight> {
     let mut hl = vec![Highlight::Normal; render.len()];
+
+    let syntax = if let Some(syntax) = syntax_opt {
+        syntax
+    } else {
+        return hl;
+    };
 
     let mut previous_is_separator = true;
     let mut previous_highlight = Highlight::Normal;
 
     for (i, c) in render.chars().enumerate() {
-        let highlight_digits = (c.is_digit(10)
-            && (previous_is_separator || Highlight::Number == previous_highlight))
-            || ('.' == c && Highlight::Number == previous_highlight);
+        let highlight_digits = (1 == (syntax.flags & HL_HIGHLIGHT_NUMBERS))
+            && ((c.is_digit(10)
+                && (previous_is_separator || Highlight::Number == previous_highlight))
+                || ('.' == c && Highlight::Number == previous_highlight));
         if highlight_digits {
             hl[i] = Highlight::Number;
             previous_highlight = Highlight::Number;
@@ -558,6 +565,37 @@ fn editor_syntax_to_color(h: Highlight) -> &'static [u8] {
         Normal => DEFAULT_FOREGROUND,
         Number => RED_FOREGROUND,
     }
+}
+
+/// E.syntax = NULL;
+/// if (E.filename == NULL) return;
+/// char *ext = strrchr(E.filename, '.');
+/// for (unsigned int j = 0; j < HLDB_ENTRIES; j++) {
+///   struct editorSyntax *s = &HLDB[j];
+///   unsigned int i = 0;
+///   while (s->filematch[i]) {
+///     int is_ext = (s->filematch[i][0] == '.');
+///     if ((is_ext && ext && !strcmp(ext, s->filematch[i])) ||
+///         (!is_ext && strstr(E.filename, s->filematch[i]))) {
+///       E.syntax = s;
+///       int filerow;
+///       for (filerow = 0; filerow < E.numrows; filerow++) {
+///         editorUpdateSyntax(&E.row[filerow]);
+///       }
+///       return;
+///     }
+///     i++;
+///   }
+/// }
+fn editor_select_syntax_highlight(extension: &str) -> Option<&'static EditorSyntax<'static>> {
+    for syntax in &HLDB {
+        for file_ext in syntax.file_match {
+            if file_ext == extension {
+                return Some(syntax);
+            }
+        }
+    }
+    Option::None
 }
 
 /*** row operation ***/
@@ -816,14 +854,14 @@ fn editor_delete_row(editor_config: &mut EditorConfig, at: usize) -> Option<ERow
 /// row->size++;
 /// row->chars[at] = c;
 /// editorUpdateRow(row);
-fn editor_row_insert_char(row: &mut ERow, at: usize, c: char) {
+fn editor_row_insert_char(syntax: Option<&EditorSyntax>, row: &mut ERow, at: usize, c: char) {
     if row.chars.is_char_boundary(at) {
         row.chars.insert(at, c);
     } else {
         row.chars.push(c);
     }
     row.render = editor_update_row(TAB_STOP, &row.chars);
-    row.hl = editor_update_syntax(&row.render);
+    row.hl = editor_update_syntax(syntax, &row.render);
 }
 
 /// row->chars = realloc(row->chars, row->size + len + 1);
@@ -832,10 +870,10 @@ fn editor_row_insert_char(row: &mut ERow, at: usize, c: char) {
 /// row->chars[row->size] = '\0';
 /// editorUpdateRow(row);
 /// E.dirty++;
-fn editor_row_append_string(row: &mut ERow, s: &str) {
+fn editor_row_append_string(syntax: Option<&EditorSyntax>, row: &mut ERow, s: &str) {
     row.chars.push_str(s);
     row.render = editor_update_row(TAB_STOP, &row.chars);
-    row.hl = editor_update_syntax(&row.render);
+    row.hl = editor_update_syntax(syntax, &row.render);
 }
 
 /// Removes the character on the left of the cursor.
@@ -845,13 +883,13 @@ fn editor_row_append_string(row: &mut ERow, s: &str) {
 /// row->size--;
 /// editorUpdateRow(row);
 /// E.dirty++;
-fn editor_row_delete_char(row: &mut ERow, at: usize) {
+fn editor_row_delete_char(syntax: Option<&EditorSyntax>, row: &mut ERow, at: usize) {
     if at == 0 || row.chars.len() < at {
         return;
     }
     row.chars.remove(at - 1);
     row.render = editor_update_row(TAB_STOP, &row.chars);
-    row.hl = editor_update_syntax(&row.render);
+    row.hl = editor_update_syntax(syntax, &row.render);
 }
 
 /*** editor operations ***/
@@ -875,10 +913,10 @@ fn editor_insert_char(editor_config: &mut EditorConfig, c: char) {
     if editor_config.rows.len() == cy {
         let chars = c.to_string();
         let render = editor_update_row(TAB_STOP, &chars);
-        let hl = editor_update_syntax(&render);
+        let hl = editor_update_syntax(editor_config.syntax, &render);
         editor_config.rows.push(ERow { chars, hl, render });
     } else if let Some(row) = editor_config.rows.get_mut(cy) {
-        editor_row_insert_char(row, cx, c);
+        editor_row_insert_char(editor_config.syntax, row, cx, c);
     }
     editor_config.dirty = true;
 }
@@ -911,10 +949,10 @@ fn editor_insert_newline(editor_config: &mut EditorConfig) {
         let cx = cursor_x as usize;
         let chars = row.chars.split_off(cx);
         row.render = editor_update_row(TAB_STOP, &row.chars);
-        row.hl = editor_update_syntax(&row.render);
+        row.hl = editor_update_syntax(editor_config.syntax, &row.render);
         // New line
         let render = editor_update_row(TAB_STOP, &chars);
-        let hl = editor_update_syntax(&render);
+        let hl = editor_update_syntax(editor_config.syntax, &render);
         editor_config
             .rows
             .insert(cy + 1, ERow { chars, hl, render });
@@ -951,10 +989,14 @@ fn editor_delete_char(editor_config: &mut EditorConfig) {
             // default "move one position right"
             editor_config.cursor = (cursor_x + 1, cursor_y - 1);
             // Merge previous and current lines
-            editor_row_append_string(&mut editor_config.rows[cy - 1], &current_row.chars);
+            editor_row_append_string(
+                editor_config.syntax,
+                &mut editor_config.rows[cy - 1],
+                &current_row.chars,
+            );
         }
     } else if let Some(row) = editor_config.rows.get_mut(cy) {
-        editor_row_delete_char(row, cx);
+        editor_row_delete_char(editor_config.syntax, row, cx);
     }
     editor_config.dirty = true;
 }
@@ -1016,6 +1058,11 @@ fn editor_open(editor_config: &mut EditorConfig, filename: &str) -> Result<(), E
         .file_name()
         .and_then(std::ffi::OsStr::to_str)
         .map(std::string::ToString::to_string);
+    let ext_opt = file_path.extension().and_then(std::ffi::OsStr::to_str);
+
+    if let Some(extension) = ext_opt {
+        editor_config.syntax = editor_select_syntax_highlight(extension);
+    }
 
     let file = File::open(filename)?;
     let reader = BufReader::new(file);
@@ -1023,7 +1070,7 @@ fn editor_open(editor_config: &mut EditorConfig, filename: &str) -> Result<(), E
 
     while let Some(Ok(chars)) = lines.next() {
         let render = editor_update_row(TAB_STOP, &chars);
-        let hl = editor_update_syntax(&render);
+        let hl = editor_update_syntax(editor_config.syntax, &render);
         editor_config.rows.push(ERow { chars, hl, render });
     }
 
@@ -1039,6 +1086,7 @@ fn editor_open(editor_config: &mut EditorConfig, filename: &str) -> Result<(), E
 ///     editorSetStatusMessage("Save aborted");
 ///     return;
 ///   }
+///   editorSelectSyntaxHighlight();
 /// }
 /// int len;
 /// char *buf = editorRowsToString(&len);
