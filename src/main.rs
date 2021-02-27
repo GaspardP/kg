@@ -1009,8 +1009,13 @@ fn editor_rows_to_string(editor_config: &EditorConfig) -> String {
 fn editor_open(editor_config: &mut EditorConfig, filename: &str) -> Result<(), Error> {
     use std::fs::File;
     use std::io::{BufRead, BufReader};
+    use std::path::Path;
 
-    editor_config.filename = Some(filename.to_string());
+    let file_path = Path::new(filename);
+    editor_config.filename = file_path
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .map(std::string::ToString::to_string);
 
     let file = File::open(filename)?;
     let reader = BufReader::new(file);
