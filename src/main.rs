@@ -172,7 +172,7 @@ struct StatusMessage {
 }
 
 #[allow(dead_code)]
-struct EditorConfig<'a> {
+struct EditorConfig {
     cursor: (u16, u16),  // chars cursor
     rcursor: (u16, u16), // render cursor
     original_termios: Termios,
@@ -186,10 +186,10 @@ struct EditorConfig<'a> {
     screen_cols: u16,
     filename: Option<String>,
     status_message: Option<StatusMessage>,
-    syntax: Option<&'a EditorSyntax>,
+    syntax: Option<&'static EditorSyntax>,
 }
 
-impl Drop for EditorConfig<'_> {
+impl Drop for EditorConfig {
     fn drop(&mut self) {
         match write(self.stdout, CLEAR_SCREEN) {
             Ok(_) => (),
@@ -1859,7 +1859,7 @@ fn editor_process_keypress(editor_config: &EditorConfig) -> Result<Event, Error>
 /// E.row = NULL;
 /// if (getWindowSize(&E.screenrows, &E.screencols) == -1) die("getWindowSize");
 /// E.screenrows -= 2;
-fn init_editor(stdin: RawFd, stdout: RawFd) -> Result<EditorConfig<'static>, Error> {
+fn init_editor(stdin: RawFd, stdout: RawFd) -> Result<EditorConfig, Error> {
     let original_termios = Termios::from_fd(stdin)?;
     enable_raw_mode(stdin, original_termios)?;
     let (screen_rows, screen_cols) = get_window_size(stdin, stdout)?;
