@@ -216,7 +216,7 @@ const RS_HL_EXT: [&str; 1] = ["rs"];
 ///     HL_HIGHLIGHT_NUMBERS
 ///   },
 /// };
-const HLDB: [EditorSyntax; 2] = [
+const HLDB: &[EditorSyntax] = &[
     EditorSyntax {
         file_type: "C",
         file_match: &C_HL_EXT,
@@ -596,7 +596,7 @@ fn editor_syntax_to_color(h: Highlight) -> &'static [u8] {
 ///   }
 /// }
 fn editor_select_syntax_highlight(extension: &str) -> Option<&'static EditorSyntax> {
-    for syntax in &HLDB {
+    for syntax in HLDB {
         for file_ext in syntax.file_match {
             if *file_ext == extension {
                 return Some(syntax);
