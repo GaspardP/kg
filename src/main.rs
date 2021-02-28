@@ -144,11 +144,11 @@ enum Highlight {
 ///   char **filematch;
 ///   int flags;
 /// };
-struct EditorSyntax<'a> {
+struct EditorSyntax {
     /// Name of the type displayed in the  status bar
-    file_type: &'a str,
+    file_type: &'static str,
     /// Patterns to match the filename against
-    file_match: &'a [&'a str],
+    file_match: &'static [&'static str],
     /// Highlights information for the type
     flags: u8,
 }
@@ -186,7 +186,7 @@ struct EditorConfig<'a> {
     screen_cols: u16,
     filename: Option<String>,
     status_message: Option<StatusMessage>,
-    syntax: Option<&'a EditorSyntax<'a>>,
+    syntax: Option<&'a EditorSyntax>,
 }
 
 impl Drop for EditorConfig<'_> {
@@ -595,7 +595,7 @@ fn editor_syntax_to_color(h: Highlight) -> &'static [u8] {
 ///     i++;
 ///   }
 /// }
-fn editor_select_syntax_highlight(extension: &str) -> Option<&'static EditorSyntax<'static>> {
+fn editor_select_syntax_highlight(extension: &str) -> Option<&'static EditorSyntax> {
     for syntax in &HLDB {
         for file_ext in syntax.file_match {
             if *file_ext == extension {
