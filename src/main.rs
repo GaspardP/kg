@@ -148,7 +148,7 @@ struct EditorSyntax<'a> {
     /// Name of the type displayed in the  status bar
     file_type: &'a str,
     /// Patterns to match the filename against
-    file_match: [&'a str; 1],
+    file_match: &'a [&'a str],
     /// Highlights information for the type
     flags: u8,
 }
@@ -206,6 +206,7 @@ impl Drop for EditorConfig<'_> {
 /*** filetypes ***/
 
 /// char *C_HL_extensions[] = { ".c", ".h", ".cpp", NULL };
+const C_HL_EXT: [&str; 3] = ["c", "h", "cpp"];
 const RS_HL_EXT: [&str; 1] = ["rs"];
 
 /// struct editorSyntax HLDB[] = {
@@ -215,11 +216,18 @@ const RS_HL_EXT: [&str; 1] = ["rs"];
 ///     HL_HIGHLIGHT_NUMBERS
 ///   },
 /// };
-const HLDB: [EditorSyntax; 1] = [EditorSyntax {
-    file_type: "rust",
-    file_match: RS_HL_EXT,
-    flags: HL_HIGHLIGHT_NUMBERS,
-}];
+const HLDB: [EditorSyntax; 2] = [
+    EditorSyntax {
+        file_type: "C",
+        file_match: &C_HL_EXT,
+        flags: HL_HIGHLIGHT_NUMBERS,
+    },
+    EditorSyntax {
+        file_type: "rust",
+        file_match: &RS_HL_EXT,
+        flags: HL_HIGHLIGHT_NUMBERS,
+    },
+];
 
 /*** terminal ***/
 
@@ -590,7 +598,7 @@ fn editor_syntax_to_color(h: Highlight) -> &'static [u8] {
 fn editor_select_syntax_highlight(extension: &str) -> Option<&'static EditorSyntax<'static>> {
     for syntax in &HLDB {
         for file_ext in syntax.file_match {
-            if file_ext == extension {
+            if *file_ext == extension {
                 return Some(syntax);
             }
         }
