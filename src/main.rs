@@ -74,6 +74,7 @@ mod colors {
 }
 
 const HL_HIGHLIGHT_NUMBERS: u8 = 1 << 0;
+const HL_HIGHLIGHT_STRINGS: u8 = 1 << 1;
 
 /*** data ***/
 
@@ -137,6 +138,7 @@ enum Highlight {
     Match,
     Normal,
     Number,
+    String,
 }
 
 /// struct editorSyntax {
@@ -220,12 +222,12 @@ const HLDB: &[EditorSyntax] = &[
     EditorSyntax {
         file_type: "C",
         file_match: &C_HL_EXT,
-        flags: HL_HIGHLIGHT_NUMBERS,
+        flags: HL_HIGHLIGHT_NUMBERS | HL_HIGHLIGHT_STRINGS,
     },
     EditorSyntax {
         file_type: "rust",
         file_match: &RS_HL_EXT,
-        flags: HL_HIGHLIGHT_NUMBERS,
+        flags: HL_HIGHLIGHT_NUMBERS | HL_HIGHLIGHT_STRINGS,
     },
 ];
 
@@ -514,17 +516,37 @@ impl IsSeparator for char {
 
 /// row->hl = realloc(row->hl, row->rsize);
 /// memset(row->hl, HL_NORMAL, row->rsize);
+/// if (E.syntax == NULL) return;
 /// int prev_sep = 1;
+/// int in_string = 0;
 /// int i = 0;
 /// while (i < row->rsize) {
 ///   char c = row->render[i];
 ///   unsigned char prev_hl = (i > 0) ? row->hl[i - 1] : HL_NORMAL;
-///   if ((isdigit(c) && (prev_sep || prev_hl == HL_NUMBER)) ||
-///       (c == '.' && prev_hl == HL_NUMBER)) {
-///     row->hl[i] = HL_NUMBER;
-///     i++;
-///     prev_sep = 0;
-///     continue;
+///   if (E.syntax->flags & HL_HIGHLIGHT_STRINGS) {
+///     if (in_string) {
+///       row->hl[i] = HL_STRING;
+///       if (c == in_string) in_string = 0;
+///       i++;
+///       prev_sep = 1;
+///       continue;
+///     } else {
+///       if (c == '"' || c == '\'') {
+///         in_string = c;
+///         row->hl[i] = HL_STRING;
+///         i++;
+///         continue;
+///       }
+///     }
+///   }
+///   if (E.syntax->flags & HL_HIGHLIGHT_NUMBERS) {
+///     if ((isdigit(c) && (prev_sep || prev_hl == HL_NUMBER)) ||
+///         (c == '.' && prev_hl == HL_NUMBER)) {
+///       row->hl[i] = HL_NUMBER;
+///       i++;
+///       prev_sep = 0;
+///       continue;
+///     }
 ///   }
 ///   prev_sep = is_separator(c);
 ///   i++;
@@ -538,15 +560,31 @@ fn editor_update_syntax(syntax_opt: Option<&EditorSyntax>, render: &str) -> Vec<
         return hl;
     };
 
+    let mut string_start: Option<char> = None;
+    let mut previous_is_escape = true;
     let mut previous_is_separator = true;
     let mut previous_highlight = Highlight::Normal;
 
     for (i, c) in render.chars().enumerate() {
-        let highlight_digits = (1 == (syntax.flags & HL_HIGHLIGHT_NUMBERS))
+        let highlight_digits = (HL_HIGHLIGHT_NUMBERS == (syntax.flags & HL_HIGHLIGHT_NUMBERS))
             && ((c.is_digit(10)
                 && (previous_is_separator || Highlight::Number == previous_highlight))
                 || ('.' == c && Highlight::Number == previous_highlight));
-        if highlight_digits {
+        let highlight_strings = HL_HIGHLIGHT_STRINGS == (syntax.flags & HL_HIGHLIGHT_STRINGS);
+
+        if highlight_strings && string_start.is_some() {
+            hl[i] = Highlight::String;
+            if previous_is_escape {
+                previous_is_escape = false;
+            } else if string_start.unwrap() == c {
+                string_start = None;
+            } else if '\\' == c {
+                previous_is_escape = true;
+            }
+        } else if highlight_strings && ('"' == c || '\'' == c) {
+            string_start = Some(c);
+            hl[i] = Highlight::String;
+        } else if highlight_digits {
             hl[i] = Highlight::Number;
             previous_highlight = Highlight::Number;
             previous_is_separator = false;
@@ -562,16 +600,18 @@ fn editor_update_syntax(syntax_opt: Option<&EditorSyntax>, render: &str) -> Vec<
 /// switch (hl) {
 ///   case HL_NUMBER: return 31;
 ///   case HL_MATCH: return 34;
+///   case HL_STRING: return 35;
 ///   default: return 37;
 /// }
 fn editor_syntax_to_color(h: Highlight) -> &'static [u8] {
-    use colors::{BLUE_FOREGROUND, DEFAULT_FOREGROUND, RED_FOREGROUND};
-    use Highlight::{Match, Normal, Number};
+    use colors::{BLUE_FOREGROUND, DEFAULT_FOREGROUND, MAGENTA_FOREGROUND, RED_FOREGROUND};
+    use Highlight::{Match, Normal, Number, String};
 
     match h {
         Match => BLUE_FOREGROUND,
         Normal => DEFAULT_FOREGROUND,
         Number => RED_FOREGROUND,
+        String => MAGENTA_FOREGROUND,
     }
 }
 
