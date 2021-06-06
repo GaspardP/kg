@@ -135,6 +135,7 @@ enum Event {
 
 #[derive(Clone, Copy, std::cmp::PartialEq)]
 enum Highlight {
+    Comment,
     Match,
     Normal,
     Number,
@@ -144,6 +145,7 @@ enum Highlight {
 /// struct editorSyntax {
 ///   char *filetype;
 ///   char **filematch;
+///   char *singleline_comment_start;
 ///   int flags;
 /// };
 struct EditorSyntax {
@@ -153,6 +155,8 @@ struct EditorSyntax {
     file_match: &'static [&'static str],
     /// Highlights information for the type
     flags: u8,
+    /// Marker for start of comment
+    single_line_comment_start: &'static str,
 }
 
 /// typedef struct erow {
@@ -215,6 +219,7 @@ const RS_HL_EXT: [&str; 1] = ["rs"];
 ///   {
 ///     "c",
 ///     C_HL_extensions,
+///     "//",
 ///     HL_HIGHLIGHT_NUMBERS
 ///   },
 /// };
@@ -223,11 +228,13 @@ const HLDB: &[EditorSyntax] = &[
         file_type: "C",
         file_match: &C_HL_EXT,
         flags: HL_HIGHLIGHT_NUMBERS | HL_HIGHLIGHT_STRINGS,
+        single_line_comment_start: "//",
     },
     EditorSyntax {
         file_type: "rust",
         file_match: &RS_HL_EXT,
         flags: HL_HIGHLIGHT_NUMBERS | HL_HIGHLIGHT_STRINGS,
+        single_line_comment_start: "//",
     },
 ];
 
@@ -517,15 +524,28 @@ impl IsSeparator for char {
 /// row->hl = realloc(row->hl, row->rsize);
 /// memset(row->hl, HL_NORMAL, row->rsize);
 /// if (E.syntax == NULL) return;
+/// char *scs = E.syntax->singleline_comment_start;
+/// int scs_len = scs ? strlen(scs) : 0;
 /// int prev_sep = 1;
 /// int in_string = 0;
 /// int i = 0;
 /// while (i < row->rsize) {
 ///   char c = row->render[i];
 ///   unsigned char prev_hl = (i > 0) ? row->hl[i - 1] : HL_NORMAL;
+///   if (scs_len && !in_string) {
+///     if (!strncmp(&row->render[i], scs, scs_len)) {
+///       memset(&row->hl[i], HL_COMMENT, row->rsize - i);
+///       break;
+///     }
+///   }
 ///   if (E.syntax->flags & HL_HIGHLIGHT_STRINGS) {
 ///     if (in_string) {
 ///       row->hl[i] = HL_STRING;
+///       if (c == '\\' && i + 1 < row->rsize) {
+///         row->hl[i + 1] = HL_STRING;
+///         i += 2;
+///         continue;
+///       }
 ///       if (c == in_string) in_string = 0;
 ///       i++;
 ///       prev_sep = 1;
@@ -565,15 +585,19 @@ fn editor_update_syntax(syntax_opt: Option<&EditorSyntax>, render: &str) -> Vec<
     let mut previous_is_separator = true;
     let mut previous_highlight = Highlight::Normal;
 
-    for (i, c) in render.chars().enumerate() {
+    let mut it = render.chars().zip(hl.iter_mut()).peekable();
+
+    while let Some((c, h)) = it.next() {
         let highlight_digits = (HL_HIGHLIGHT_NUMBERS == (syntax.flags & HL_HIGHLIGHT_NUMBERS))
             && ((c.is_digit(10)
                 && (previous_is_separator || Highlight::Number == previous_highlight))
                 || ('.' == c && Highlight::Number == previous_highlight));
         let highlight_strings = HL_HIGHLIGHT_STRINGS == (syntax.flags & HL_HIGHLIGHT_STRINGS);
+        let highlight_single_line_comment = !syntax.single_line_comment_start.is_empty()
+            && syntax.single_line_comment_start.starts_with(c);
 
         if highlight_strings && string_start.is_some() {
-            hl[i] = Highlight::String;
+            *h = Highlight::String;
             if previous_is_escape {
                 previous_is_escape = false;
             } else if string_start.unwrap() == c {
@@ -583,11 +607,28 @@ fn editor_update_syntax(syntax_opt: Option<&EditorSyntax>, render: &str) -> Vec<
             }
         } else if highlight_strings && ('"' == c || '\'' == c) {
             string_start = Some(c);
-            hl[i] = Highlight::String;
+            *h = Highlight::String;
         } else if highlight_digits {
-            hl[i] = Highlight::Number;
+            *h = Highlight::Number;
             previous_highlight = Highlight::Number;
             previous_is_separator = false;
+        } else if highlight_single_line_comment {
+            if let Some((c2, _)) = it.peek() {
+                // Only consume the next element if it matches the "comment start"
+                if syntax.single_line_comment_start == format!("{}{}", c, c2) {
+                    let (_, h2) = it.next().unwrap();
+                    *h = Highlight::Comment;
+                    *h2 = Highlight::Comment;
+                    // Set the rest of the line as comment
+                    for (_, hn) in it.by_ref() {
+                        *hn = Highlight::Comment;
+                    }
+                }
+            } else {
+                // End of line, not a comment
+                previous_highlight = Highlight::Normal;
+                previous_is_separator = c.is_separator();
+            }
         } else {
             previous_highlight = Highlight::Normal;
             previous_is_separator = c.is_separator();
@@ -598,16 +639,20 @@ fn editor_update_syntax(syntax_opt: Option<&EditorSyntax>, render: &str) -> Vec<
 }
 
 /// switch (hl) {
+///   case HL_COMMENT: return 36;
 ///   case HL_NUMBER: return 31;
 ///   case HL_MATCH: return 34;
 ///   case HL_STRING: return 35;
 ///   default: return 37;
 /// }
 fn editor_syntax_to_color(h: Highlight) -> &'static [u8] {
-    use colors::{BLUE_FOREGROUND, DEFAULT_FOREGROUND, MAGENTA_FOREGROUND, RED_FOREGROUND};
-    use Highlight::{Match, Normal, Number, String};
+    use colors::{
+        BLUE_FOREGROUND, CYAN_FOREGROUND, DEFAULT_FOREGROUND, MAGENTA_FOREGROUND, RED_FOREGROUND,
+    };
+    use Highlight::{Comment, Match, Normal, Number, String};
 
     match h {
+        Comment => CYAN_FOREGROUND,
         Match => BLUE_FOREGROUND,
         Normal => DEFAULT_FOREGROUND,
         Number => RED_FOREGROUND,
