@@ -580,8 +580,6 @@ fn editor_update_syntax(syntax_opt: Option<&EditorSyntax>, render: &str) -> Vec<
         return hl;
     };
 
-    let mut string_start: Option<char> = None;
-    let mut previous_is_escape = true;
     let mut previous_is_separator = true;
     let mut previous_highlight = Highlight::Normal;
 
@@ -592,22 +590,27 @@ fn editor_update_syntax(syntax_opt: Option<&EditorSyntax>, render: &str) -> Vec<
             && ((c.is_digit(10)
                 && (previous_is_separator || Highlight::Number == previous_highlight))
                 || ('.' == c && Highlight::Number == previous_highlight));
-        let highlight_strings = HL_HIGHLIGHT_STRINGS == (syntax.flags & HL_HIGHLIGHT_STRINGS);
+        let highlight_strings = HL_HIGHLIGHT_STRINGS == (syntax.flags & HL_HIGHLIGHT_STRINGS)
+            && ('"' == c || '\'' == c);
         let highlight_single_line_comment = !syntax.single_line_comment_start.is_empty()
             && syntax.single_line_comment_start.starts_with(c);
 
-        if highlight_strings && string_start.is_some() {
+        if highlight_strings {
             *h = Highlight::String;
-            if previous_is_escape {
-                previous_is_escape = false;
-            } else if string_start.unwrap() == c {
-                string_start = None;
-            } else if '\\' == c {
-                previous_is_escape = true;
+            // Process following chars until the end of the string
+            while let Some((c2, h2)) = it.next() {
+                *h2 = Highlight::String;
+                if c2 == c {
+                    // End of the string, go back to top level loop
+                    previous_is_separator = c.is_separator();
+                    break;
+                } else if '\\' == c2 {
+                    // Whatever it is, next char is escaped and part of the string
+                    if let Some((_, h3)) = it.next() {
+                        *h3 = Highlight::String;
+                    }
+                }
             }
-        } else if highlight_strings && ('"' == c || '\'' == c) {
-            string_start = Some(c);
-            *h = Highlight::String;
         } else if highlight_digits {
             *h = Highlight::Number;
             previous_highlight = Highlight::Number;
