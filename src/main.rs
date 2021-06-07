@@ -136,6 +136,8 @@ enum Event {
 #[derive(Clone, Copy, std::cmp::PartialEq)]
 enum Highlight {
     Comment,
+    KeywordReserved,
+    KeywordType,
     Match,
     Normal,
     Number,
@@ -145,6 +147,7 @@ enum Highlight {
 /// struct editorSyntax {
 ///   char *filetype;
 ///   char **filematch;
+///   char **keywords;
 ///   char *singleline_comment_start;
 ///   int flags;
 /// };
@@ -155,6 +158,8 @@ struct EditorSyntax {
     file_match: &'static [&'static str],
     /// Highlights information for the type
     flags: u8,
+    keyword_reserved: &'static [&'static str],
+    keyword_type: &'static [&'static str],
     /// Marker for start of comment
     single_line_comment_start: &'static str,
 }
@@ -215,10 +220,21 @@ impl Drop for EditorConfig {
 const C_HL_EXT: [&str; 3] = ["c", "h", "cpp"];
 const RS_HL_EXT: [&str; 1] = ["rs"];
 
+/// char *C_HL_keywords[] = {
+///   "switch", "if", "else", ...
+///   "int|", "long|"
+///   NULL
+/// };
+const C_HL_KW_RESERVED: [&str; 3] = ["switch", "if", "else"];
+const C_HL_KW_TYPE: [&str; 2] = ["integer", "unsigned"];
+const RS_HL_KW_RESERVED: [&str; 4] = ["fn", "match", "if", "else"];
+const RS_HL_KW_TYPE: [&str; 3] = ["bool", "u8", "i8"];
+
 /// struct editorSyntax HLDB[] = {
 ///   {
 ///     "c",
 ///     C_HL_extensions,
+///     C_HL_keywords,
 ///     "//",
 ///     HL_HIGHLIGHT_NUMBERS
 ///   },
@@ -228,12 +244,16 @@ const HLDB: &[EditorSyntax] = &[
         file_type: "C",
         file_match: &C_HL_EXT,
         flags: HL_HIGHLIGHT_NUMBERS | HL_HIGHLIGHT_STRINGS,
+        keyword_reserved: &C_HL_KW_RESERVED,
+        keyword_type: &C_HL_KW_TYPE,
         single_line_comment_start: "//",
     },
     EditorSyntax {
         file_type: "rust",
         file_match: &RS_HL_EXT,
         flags: HL_HIGHLIGHT_NUMBERS | HL_HIGHLIGHT_STRINGS,
+        keyword_reserved: &RS_HL_KW_RESERVED,
+        keyword_type: &RS_HL_KW_TYPE,
         single_line_comment_start: "//",
     },
 ];
@@ -524,6 +544,7 @@ impl IsSeparator for char {
 /// row->hl = realloc(row->hl, row->rsize);
 /// memset(row->hl, HL_NORMAL, row->rsize);
 /// if (E.syntax == NULL) return;
+/// char **keywords = E.syntax->keywords;
 /// char *scs = E.syntax->singleline_comment_start;
 /// int scs_len = scs ? strlen(scs) : 0;
 /// int prev_sep = 1;
@@ -564,6 +585,24 @@ impl IsSeparator for char {
 ///         (c == '.' && prev_hl == HL_NUMBER)) {
 ///       row->hl[i] = HL_NUMBER;
 ///       i++;
+///       prev_sep = 0;
+///       continue;
+///     }
+///   }
+///   if (prev_sep) {
+///     int j;
+///     for (j = 0; keywords[j]; j++) {
+///       int klen = strlen(keywords[j]);
+///       int kw2 = keywords[j][klen - 1] == '|';
+///       if (kw2) klen--;
+///       if (!strncmp(&row->render[i], keywords[j], klen) &&
+///           is_separator(row->render[i + klen])) {
+///         memset(&row->hl[i], kw2 ? HL_KEYWORD2 : HL_KEYWORD1, klen);
+///         i += klen;
+///         break;
+///       }
+///     }
+///     if (keywords[j] != NULL) {
 ///       prev_sep = 0;
 ///       continue;
 ///     }
@@ -632,6 +671,15 @@ fn editor_update_syntax(syntax_opt: Option<&EditorSyntax>, render: &str) -> Vec<
                 previous_highlight = Highlight::Normal;
                 previous_is_separator = c.is_separator();
             }
+        } else if previous_is_separator {
+            // Checking if the next word is not a keyword
+            let mut word = Vec::new();
+            for (l, _) in it.by_ref() {
+                if l.is_separator() {
+                    break;
+                }
+                word.push(l);
+            }
         } else {
             previous_highlight = Highlight::Normal;
             previous_is_separator = c.is_separator();
@@ -643,6 +691,8 @@ fn editor_update_syntax(syntax_opt: Option<&EditorSyntax>, render: &str) -> Vec<
 
 /// switch (hl) {
 ///   case HL_COMMENT: return 36;
+///   case HL_KEYWORD1: return 33;
+///   case HL_KEYWORD2: return 32;
 ///   case HL_NUMBER: return 31;
 ///   case HL_MATCH: return 34;
 ///   case HL_STRING: return 35;
@@ -650,12 +700,15 @@ fn editor_update_syntax(syntax_opt: Option<&EditorSyntax>, render: &str) -> Vec<
 /// }
 fn editor_syntax_to_color(h: Highlight) -> &'static [u8] {
     use colors::{
-        BLUE_FOREGROUND, CYAN_FOREGROUND, DEFAULT_FOREGROUND, MAGENTA_FOREGROUND, RED_FOREGROUND,
+        BLUE_FOREGROUND, CYAN_FOREGROUND, DEFAULT_FOREGROUND, GREEN_FOREGROUND, MAGENTA_FOREGROUND,
+        RED_FOREGROUND, YELLOW_FOREGROUND,
     };
-    use Highlight::{Comment, Match, Normal, Number, String};
+    use Highlight::{Comment, KeywordReserved, KeywordType, Match, Normal, Number, String};
 
     match h {
         Comment => CYAN_FOREGROUND,
+        KeywordReserved => YELLOW_FOREGROUND,
+        KeywordType => GREEN_FOREGROUND,
         Match => BLUE_FOREGROUND,
         Normal => DEFAULT_FOREGROUND,
         Number => RED_FOREGROUND,
