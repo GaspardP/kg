@@ -133,7 +133,7 @@ enum Event {
     Save,
 }
 
-#[derive(Clone, Copy, std::cmp::PartialEq)]
+#[derive(Clone, Copy, Debug, std::cmp::PartialEq)]
 enum Highlight {
     Comment,
     KeywordReserved,
@@ -161,7 +161,7 @@ struct EditorSyntax {
     keyword_reserved: &'static [&'static str],
     keyword_type: &'static [&'static str],
     /// Marker for start of comment
-    single_line_comment_start: &'static str,
+    single_line_comment_start: Option<&'static str>,
 }
 
 /// typedef struct erow {
@@ -225,8 +225,8 @@ const RS_HL_EXT: [&str; 1] = ["rs"];
 ///   "int|", "long|"
 ///   NULL
 /// };
-const C_HL_KW_RESERVED: [&str; 3] = ["switch", "if", "else"];
-const C_HL_KW_TYPE: [&str; 2] = ["integer", "unsigned"];
+const C_HL_KW_RESERVED: [&str; 4] = ["switch", "if", "else", "return"];
+const C_HL_KW_TYPE: [&str; 5] = ["byte", "char", "double", "float", "int"];
 const RS_HL_KW_RESERVED: [&str; 4] = ["fn", "match", "if", "else"];
 const RS_HL_KW_TYPE: [&str; 3] = ["bool", "u8", "i8"];
 
@@ -246,7 +246,7 @@ const HLDB: &[EditorSyntax] = &[
         flags: HL_HIGHLIGHT_NUMBERS | HL_HIGHLIGHT_STRINGS,
         keyword_reserved: &C_HL_KW_RESERVED,
         keyword_type: &C_HL_KW_TYPE,
-        single_line_comment_start: "//",
+        single_line_comment_start: Some("//"),
     },
     EditorSyntax {
         file_type: "rust",
@@ -254,7 +254,7 @@ const HLDB: &[EditorSyntax] = &[
         flags: HL_HIGHLIGHT_NUMBERS | HL_HIGHLIGHT_STRINGS,
         keyword_reserved: &RS_HL_KW_RESERVED,
         keyword_type: &RS_HL_KW_TYPE,
-        single_line_comment_start: "//",
+        single_line_comment_start: Some("//"),
     },
 ];
 
@@ -541,6 +541,104 @@ impl IsSeparator for char {
     }
 }
 
+fn should_highlight_as_digits(
+    syntax_flags: u8,
+    c: char,
+    previous_highlight: Highlight,
+    previous_is_separator: bool,
+) -> bool {
+    (HL_HIGHLIGHT_NUMBERS == (syntax_flags & HL_HIGHLIGHT_NUMBERS))
+        && ((c.is_digit(10) && (previous_is_separator || Highlight::Number == previous_highlight))
+            || ('.' == c && Highlight::Number == previous_highlight))
+}
+
+fn highlight_digits(
+    hl: &mut [Highlight],
+    i: &mut usize,
+    previous_highlight: &mut Highlight,
+    previous_is_separator: &mut bool,
+) {
+    hl[*i] = Highlight::Number;
+    *i += 1;
+    *previous_highlight = Highlight::Number;
+    *previous_is_separator = false;
+}
+
+fn should_highlight_as_string(syntax_flags: u8, c: char) -> bool {
+    (HL_HIGHLIGHT_STRINGS == (syntax_flags & HL_HIGHLIGHT_STRINGS)) && ('"' == c || '\'' == c)
+}
+
+fn highlight_string(
+    hl: &mut [Highlight],
+    chars: &[char],
+    i: &mut usize,
+    previous_is_separator: &mut bool,
+) {
+    let open_char = chars[*i];
+    hl[*i] = Highlight::String;
+    *i += 1;
+    // Process following chars until the end of the string
+    while *i < chars.len() {
+        let c = chars[*i];
+        hl[*i] = Highlight::String;
+
+        if c == open_char {
+            // End of string
+            *previous_is_separator = c.is_separator();
+            *i += 1;
+            return;
+        } else if '\\' == c {
+            // Whatever it is, next char is escaped and part of the string
+            if let Some(h) = hl.get_mut(*i + 1) {
+                *i += 1;
+                *h = Highlight::String;
+            }
+        }
+        *i += 1;
+    }
+}
+
+fn should_highlight_as_single_line_comment(
+    single_line_comment_start: Option<&str>,
+    chars: &[char],
+    i: usize,
+) -> bool {
+    if let Some(comment_start) = single_line_comment_start {
+        let slice_start = i;
+        let slice_end = i + comment_start.len();
+        if chars.len() < slice_end {
+            // No space left to have the comments
+            return false;
+        }
+        let slice_range = slice_start..slice_end;
+        let cs: String = chars[slice_range].iter().collect();
+        comment_start.len() == cs.len() && comment_start.starts_with(&cs)
+    } else {
+        false
+    }
+}
+
+fn highlight_single_line_comment(hl: &mut [Highlight], i: &mut usize) {
+    // Set the rest of the line as comment
+    while *i < hl.len() {
+        hl[*i] = Highlight::Comment;
+        *i += 1;
+    }
+}
+
+fn should_highlight_as_keyword(
+    _syntax_flags: u8,
+    _chars: &[char],
+    _i: usize,
+    _previous_is_separator: bool,
+) -> bool {
+    false
+}
+
+fn highlight_keyword(_hl: &mut [Highlight], _i: &mut usize) {
+    // TODO
+}
+
 /// row->hl = realloc(row->hl, row->rsize);
 /// memset(row->hl, HL_NORMAL, row->rsize);
 /// if (E.syntax == NULL) return;
@@ -619,74 +717,106 @@ fn editor_update_syntax(syntax_opt: Option<&EditorSyntax>, render: &str) -> Vec<
         return hl;
     };
 
+    let chars: Vec<char> = render.chars().collect();
+    let mut i: usize = 0;
     let mut previous_is_separator = true;
     let mut previous_highlight = Highlight::Normal;
 
-    let mut it = render.chars().zip(hl.iter_mut()).peekable();
+    while i < chars.len() {
+        let c = chars[i];
+        let is_digits =
+            should_highlight_as_digits(syntax.flags, c, previous_highlight, previous_is_separator);
+        let is_string = should_highlight_as_string(syntax.flags, c);
+        let is_single_line_comment =
+            should_highlight_as_single_line_comment(syntax.single_line_comment_start, &chars, i);
+        let is_keyword =
+            should_highlight_as_keyword(syntax.flags, &chars, i, previous_is_separator);
 
-    while let Some((c, h)) = it.next() {
-        let highlight_digits = (HL_HIGHLIGHT_NUMBERS == (syntax.flags & HL_HIGHLIGHT_NUMBERS))
-            && ((c.is_digit(10)
-                && (previous_is_separator || Highlight::Number == previous_highlight))
-                || ('.' == c && Highlight::Number == previous_highlight));
-        let highlight_strings = HL_HIGHLIGHT_STRINGS == (syntax.flags & HL_HIGHLIGHT_STRINGS)
-            && ('"' == c || '\'' == c);
-        let highlight_single_line_comment = !syntax.single_line_comment_start.is_empty()
-            && syntax.single_line_comment_start.starts_with(c);
-
-        if highlight_strings {
-            *h = Highlight::String;
-            // Process following chars until the end of the string
-            while let Some((c2, h2)) = it.next() {
-                *h2 = Highlight::String;
-                if c2 == c {
-                    // End of the string, go back to top level loop
-                    previous_is_separator = c.is_separator();
-                    break;
-                } else if '\\' == c2 {
-                    // Whatever it is, next char is escaped and part of the string
-                    if let Some((_, h3)) = it.next() {
-                        *h3 = Highlight::String;
-                    }
-                }
-            }
-        } else if highlight_digits {
-            *h = Highlight::Number;
-            previous_highlight = Highlight::Number;
-            previous_is_separator = false;
-        } else if highlight_single_line_comment {
-            if let Some((c2, _)) = it.peek() {
-                // Only consume the next element if it matches the "comment start"
-                if syntax.single_line_comment_start == format!("{}{}", c, c2) {
-                    let (_, h2) = it.next().unwrap();
-                    *h = Highlight::Comment;
-                    *h2 = Highlight::Comment;
-                    // Set the rest of the line as comment
-                    for (_, hn) in it.by_ref() {
-                        *hn = Highlight::Comment;
-                    }
-                }
-            } else {
-                // End of line, not a comment
-                previous_highlight = Highlight::Normal;
-                previous_is_separator = c.is_separator();
-            }
-        } else if previous_is_separator {
-            // Checking if the next word is not a keyword
-            let mut word = Vec::new();
-            for (l, _) in it.by_ref() {
-                if l.is_separator() {
-                    break;
-                }
-                word.push(l);
-            }
+        if is_string {
+            highlight_string(&mut hl, &chars, &mut i, &mut previous_is_separator);
+        } else if is_digits {
+            highlight_digits(
+                &mut hl,
+                &mut i,
+                &mut previous_highlight,
+                &mut previous_is_separator,
+            );
+        } else if is_single_line_comment {
+            highlight_single_line_comment(&mut hl, &mut i);
+        } else if is_keyword {
+            highlight_keyword(&mut hl, &mut i);
         } else {
             previous_highlight = Highlight::Normal;
             previous_is_separator = c.is_separator();
+            i += 1;
         }
     }
 
     hl
+}
+
+#[cfg(test)]
+mod tests_editor_update_syntax {
+    use super::{editor_update_syntax, EditorSyntax, Highlight, HLDB};
+
+    const C: Highlight = Highlight::Comment;
+    const R: Highlight = Highlight::KeywordReserved;
+    const T: Highlight = Highlight::KeywordType;
+    // Only used during the match process and not the `editor_update_syntax`
+    // const M: Highlight = Highlight::Match;
+    const H: Highlight = Highlight::Normal;
+    const N: Highlight = Highlight::Number;
+    const S: Highlight = Highlight::String;
+
+    #[test]
+    fn test_text() {
+        let syntax: Option<&EditorSyntax> = Some(&HLDB[0]);
+        assert_eq!([H, H, H].to_vec(), editor_update_syntax(syntax, "abc"));
+    }
+
+    #[test]
+    fn test_digits() {
+        let syntax: Option<&EditorSyntax> = Some(&HLDB[0]);
+        assert_eq!([N, N, N].to_vec(), editor_update_syntax(syntax, "123"));
+        assert_eq!(
+            [H, H, H, H, N, N, N].to_vec(),
+            editor_update_syntax(syntax, "abc 123")
+        );
+        // Invalid number but we decided to color it anyway
+        assert_eq!(
+            [N, N, N, H, H, H].to_vec(),
+            editor_update_syntax(syntax, "123abc")
+        );
+        assert_eq!(
+            [H, H, H, H, H, H].to_vec(),
+            editor_update_syntax(syntax, "abc123")
+        );
+    }
+
+    #[test]
+    fn test_comments() {
+        let syntax: Option<&EditorSyntax> = Some(&HLDB[0]);
+        assert_eq!(
+            [H, H, H, H, C, C, C, C, C, C].to_vec(),
+            editor_update_syntax(syntax, "abc // abc")
+        );
+        assert_eq!([C, C, C, C].to_vec(), editor_update_syntax(syntax, "//12"));
+        assert_eq!([N, H, N].to_vec(), editor_update_syntax(syntax, "1/2"));
+        assert_eq!([H, C, C].to_vec(), editor_update_syntax(syntax, "a//"));
+    }
+
+    #[test]
+    fn test_strings() {
+        let syntax: Option<&EditorSyntax> = Some(&HLDB[0]);
+        assert_eq!(
+            [H, H, S, S, S, H, H].to_vec(),
+            editor_update_syntax(syntax, "a \"b\" c")
+        );
+        assert_eq!(
+            [H, H, S, S, S, S, S, H, H].to_vec(),
+            editor_update_syntax(syntax, "a \"123\" c")
+        );
+    }
 }
 
 /// switch (hl) {
