@@ -572,6 +572,7 @@ fn highlight_string(
     hl: &mut [Highlight],
     chars: &[char],
     i: &mut usize,
+    previous_highlight: &mut Highlight,
     previous_is_separator: &mut bool,
 ) {
     let open_char = chars[*i];
@@ -596,6 +597,8 @@ fn highlight_string(
         }
         *i += 1;
     }
+    *previous_highlight = Highlight::String;
+    *previous_is_separator = true;
 }
 
 fn should_highlight_as_single_line_comment(
@@ -618,25 +621,102 @@ fn should_highlight_as_single_line_comment(
     }
 }
 
-fn highlight_single_line_comment(hl: &mut [Highlight], i: &mut usize) {
+fn highlight_single_line_comment(
+    hl: &mut [Highlight],
+    i: &mut usize,
+    previous_highlight: &mut Highlight,
+    previous_is_separator: &mut bool,
+) {
     // Set the rest of the line as comment
     while *i < hl.len() {
         hl[*i] = Highlight::Comment;
         *i += 1;
     }
+    // End of line so it doesn't matter much
+    *previous_highlight = Highlight::Normal;
+    *previous_is_separator = true;
 }
 
 fn should_highlight_as_keyword(
-    _syntax_flags: u8,
-    _chars: &[char],
-    _i: usize,
-    _previous_is_separator: bool,
+    chars: &[char],
+    i: usize,
+    previous_is_separator: bool,
+    syntax_keyword_type: &[&str],
+    syntax_keyword_reserved: &[&str],
 ) -> bool {
+    if !previous_is_separator {
+        return false;
+    }
+
+    let mut j = i + 1;
+
+    while j < chars.len() {
+        if chars[j].is_separator() {
+            break;
+        }
+        j += 1;
+    }
+
+    let word: String = chars[i..j].iter().collect();
+
+    for kw in syntax_keyword_reserved {
+        if *kw == word {
+            return true;
+        }
+    }
+
+    for kw in syntax_keyword_type {
+        if *kw == word {
+            return true;
+        }
+    }
+
     false
 }
 
-fn highlight_keyword(_hl: &mut [Highlight], _i: &mut usize) {
-    // TODO
+fn highlight_keyword(
+    hl: &mut [Highlight],
+    chars: &[char],
+    i: &mut usize,
+    syntax_keyword_type: &[&str],
+    syntax_keyword_reserved: &[&str],
+    previous_highlight: &mut Highlight,
+    previous_is_separator: &mut bool,
+) {
+    let mut j: usize = *i + 1;
+
+    while j < chars.len() {
+        if chars[j].is_separator() {
+            break;
+        }
+        j += 1;
+    }
+
+    let word: String = chars[*i..j].iter().collect();
+
+    for kw in syntax_keyword_reserved {
+        if *kw == word {
+            for h in hl.iter_mut().take(j).skip(*i) {
+                *h = Highlight::KeywordReserved;
+            }
+            *i = j;
+            *previous_highlight = Highlight::KeywordReserved;
+            *previous_is_separator = false;
+            return;
+        }
+    }
+
+    for kw in syntax_keyword_type {
+        if *kw == word {
+            for h in hl.iter_mut().take(j).skip(*i) {
+                *h = Highlight::KeywordType;
+            }
+            *i = j;
+            *previous_highlight = Highlight::KeywordReserved;
+            *previous_is_separator = false;
+            return;
+        }
+    }
 }
 
 /// row->hl = realloc(row->hl, row->rsize);
@@ -724,16 +804,29 @@ fn editor_update_syntax(syntax_opt: Option<&EditorSyntax>, render: &str) -> Vec<
 
     while i < chars.len() {
         let c = chars[i];
+
         let is_digits =
             should_highlight_as_digits(syntax.flags, c, previous_highlight, previous_is_separator);
         let is_string = should_highlight_as_string(syntax.flags, c);
+
         let is_single_line_comment =
             should_highlight_as_single_line_comment(syntax.single_line_comment_start, &chars, i);
-        let is_keyword =
-            should_highlight_as_keyword(syntax.flags, &chars, i, previous_is_separator);
+        let is_keyword = should_highlight_as_keyword(
+            &chars,
+            i,
+            previous_is_separator,
+            syntax.keyword_type,
+            syntax.keyword_reserved,
+        );
 
         if is_string {
-            highlight_string(&mut hl, &chars, &mut i, &mut previous_is_separator);
+            highlight_string(
+                &mut hl,
+                &chars,
+                &mut i,
+                &mut previous_highlight,
+                &mut previous_is_separator,
+            );
         } else if is_digits {
             highlight_digits(
                 &mut hl,
@@ -742,9 +835,22 @@ fn editor_update_syntax(syntax_opt: Option<&EditorSyntax>, render: &str) -> Vec<
                 &mut previous_is_separator,
             );
         } else if is_single_line_comment {
-            highlight_single_line_comment(&mut hl, &mut i);
+            highlight_single_line_comment(
+                &mut hl,
+                &mut i,
+                &mut previous_highlight,
+                &mut previous_is_separator,
+            );
         } else if is_keyword {
-            highlight_keyword(&mut hl, &mut i);
+            highlight_keyword(
+                &mut hl,
+                &chars,
+                &mut i,
+                syntax.keyword_type,
+                syntax.keyword_reserved,
+                &mut previous_highlight,
+                &mut previous_is_separator,
+            );
         } else {
             previous_highlight = Highlight::Normal;
             previous_is_separator = c.is_separator();
@@ -815,6 +921,37 @@ mod tests_editor_update_syntax {
         assert_eq!(
             [H, H, S, S, S, S, S, H, H].to_vec(),
             editor_update_syntax(syntax, "a \"123\" c")
+        );
+    }
+
+    #[test]
+    fn test_keywords() {
+        let syntax: Option<&EditorSyntax> = Some(&HLDB[0]);
+
+        assert_eq!([R, R].to_vec(), editor_update_syntax(syntax, "if"));
+
+        assert_eq!([T, T, T].to_vec(), editor_update_syntax(syntax, "int"));
+        assert_eq!(
+            [R, R, H, H, H, H, H, H, N, H].to_vec(),
+            editor_update_syntax(syntax, "if (a < 3)")
+        );
+        assert_eq!(
+            [T, T, T, H, H, H, H, H, N, N, H].to_vec(),
+            editor_update_syntax(syntax, "int n = 20;")
+        );
+        assert_eq!(
+            [T, T, T, H, H, H, H, H, N, N, H, H, C, C, C, C].to_vec(),
+            editor_update_syntax(syntax, "int n = 20; // a")
+        );
+
+        assert_eq!(
+            [H, H, H, H, R, R, H, H, H, H, C, C, C, C, C].to_vec(),
+            editor_update_syntax(syntax, "abc if ee // ad")
+        );
+
+        assert_eq!(
+            [H, H, H, H, H, R, R, H, H, H, H, C, C, C, C, C].to_vec(),
+            editor_update_syntax(syntax, "abcd if ee // ad")
         );
     }
 }
