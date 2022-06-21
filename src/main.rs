@@ -225,10 +225,24 @@ const RS_HL_EXT: [&str; 1] = ["rs"];
 ///   "int|", "long|"
 ///   NULL
 /// };
-const C_HL_KW_RESERVED: [&str; 4] = ["switch", "if", "else", "return"];
-const C_HL_KW_TYPE: [&str; 5] = ["byte", "char", "double", "float", "int"];
-const RS_HL_KW_RESERVED: [&str; 4] = ["fn", "match", "if", "else"];
-const RS_HL_KW_TYPE: [&str; 3] = ["bool", "u8", "i8"];
+const C_HL_KW_RESERVED: [&str; 15] = [
+    "break", "case", "class", "continue", "else", "enum", "for", "if", "return", "static",
+    "struct", "switch", "typedef", "union", "while",
+];
+const C_HL_KW_TYPE: [&str; 8] = [
+    "char", "double", "float", "int", "long", "signed", "unsigned", "void",
+];
+const RS_HL_KW_RESERVED: [&str; 51] = [
+    "as", "break", "const", "continue", "crate", "else", "enum", "extern", "false", "fn", "for",
+    "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub", "ref", "return",
+    "self", "Self", "static", "struct", "super", "trait", "true", "type", "unsafe", "use", "where",
+    "while", "async", "await", "dyn", "abstract", "become", "box", "do", "final", "macro",
+    "override", "priv", "typeof", "unsized", "virtual", "yield", "try",
+];
+const RS_HL_KW_TYPE: [&str; 17] = [
+    "bool", "char", "f32", "f64", "i128", "i16", "i32", "i64", "i8", "isize", "str", "u128", "u16",
+    "u32", "u64", "u8", "usize",
+];
 
 /// struct editorSyntax HLDB[] = {
 ///   {
