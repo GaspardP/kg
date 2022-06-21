@@ -555,26 +555,29 @@ impl IsSeparator for char {
     }
 }
 
-fn should_highlight_as_digits(
-    syntax_flags: u8,
-    c: char,
-    previous_highlight: Highlight,
-    previous_is_separator: bool,
-) -> bool {
+fn should_highlight_as_digits(syntax_flags: u8, c: char, previous_is_separator: bool) -> bool {
     (HL_HIGHLIGHT_NUMBERS == (syntax_flags & HL_HIGHLIGHT_NUMBERS))
-        && ((c.is_digit(10) && (previous_is_separator || Highlight::Number == previous_highlight))
-            || ('.' == c && Highlight::Number == previous_highlight))
+        && c.is_digit(10)
+        && previous_is_separator
 }
 
 fn highlight_digits(
     hl: &mut [Highlight],
+    chars: &[char],
     i: &mut usize,
-    previous_highlight: &mut Highlight,
     previous_is_separator: &mut bool,
 ) {
     hl[*i] = Highlight::Number;
     *i += 1;
-    *previous_highlight = Highlight::Number;
+    while *i < chars.len() {
+        let c = chars[*i];
+        if c.is_digit(10) || c == '.' {
+            hl[*i] = Highlight::Number;
+            *i += 1;
+        } else {
+            break;
+        }
+    }
     *previous_is_separator = false;
 }
 
@@ -586,7 +589,6 @@ fn highlight_string(
     hl: &mut [Highlight],
     chars: &[char],
     i: &mut usize,
-    previous_highlight: &mut Highlight,
     previous_is_separator: &mut bool,
 ) {
     let open_char = chars[*i];
@@ -611,7 +613,6 @@ fn highlight_string(
         }
         *i += 1;
     }
-    *previous_highlight = Highlight::String;
     *previous_is_separator = true;
 }
 
@@ -638,7 +639,6 @@ fn should_highlight_as_single_line_comment(
 fn highlight_single_line_comment(
     hl: &mut [Highlight],
     i: &mut usize,
-    previous_highlight: &mut Highlight,
     previous_is_separator: &mut bool,
 ) {
     // Set the rest of the line as comment
@@ -647,7 +647,6 @@ fn highlight_single_line_comment(
         *i += 1;
     }
     // End of line so it doesn't matter much
-    *previous_highlight = Highlight::Normal;
     *previous_is_separator = true;
 }
 
@@ -694,7 +693,6 @@ fn highlight_keyword(
     i: &mut usize,
     syntax_keyword_type: &[&str],
     syntax_keyword_reserved: &[&str],
-    previous_highlight: &mut Highlight,
     previous_is_separator: &mut bool,
 ) {
     let mut j: usize = *i + 1;
@@ -714,7 +712,6 @@ fn highlight_keyword(
                 *h = Highlight::KeywordReserved;
             }
             *i = j;
-            *previous_highlight = Highlight::KeywordReserved;
             *previous_is_separator = false;
             return;
         }
@@ -726,7 +723,6 @@ fn highlight_keyword(
                 *h = Highlight::KeywordType;
             }
             *i = j;
-            *previous_highlight = Highlight::KeywordReserved;
             *previous_is_separator = false;
             return;
         }
@@ -814,13 +810,11 @@ fn editor_update_syntax(syntax_opt: Option<&EditorSyntax>, render: &str) -> Vec<
     let chars: Vec<char> = render.chars().collect();
     let mut i: usize = 0;
     let mut previous_is_separator = true;
-    let mut previous_highlight = Highlight::Normal;
 
     while i < chars.len() {
         let c = chars[i];
 
-        let is_digits =
-            should_highlight_as_digits(syntax.flags, c, previous_highlight, previous_is_separator);
+        let is_digits = should_highlight_as_digits(syntax.flags, c, previous_is_separator);
         let is_string = should_highlight_as_string(syntax.flags, c);
 
         let is_single_line_comment =
@@ -834,27 +828,11 @@ fn editor_update_syntax(syntax_opt: Option<&EditorSyntax>, render: &str) -> Vec<
         );
 
         if is_string {
-            highlight_string(
-                &mut hl,
-                &chars,
-                &mut i,
-                &mut previous_highlight,
-                &mut previous_is_separator,
-            );
+            highlight_string(&mut hl, &chars, &mut i, &mut previous_is_separator);
         } else if is_digits {
-            highlight_digits(
-                &mut hl,
-                &mut i,
-                &mut previous_highlight,
-                &mut previous_is_separator,
-            );
+            highlight_digits(&mut hl, &chars, &mut i, &mut previous_is_separator);
         } else if is_single_line_comment {
-            highlight_single_line_comment(
-                &mut hl,
-                &mut i,
-                &mut previous_highlight,
-                &mut previous_is_separator,
-            );
+            highlight_single_line_comment(&mut hl, &mut i, &mut previous_is_separator);
         } else if is_keyword {
             highlight_keyword(
                 &mut hl,
@@ -862,11 +840,9 @@ fn editor_update_syntax(syntax_opt: Option<&EditorSyntax>, render: &str) -> Vec<
                 &mut i,
                 syntax.keyword_type,
                 syntax.keyword_reserved,
-                &mut previous_highlight,
                 &mut previous_is_separator,
             );
         } else {
-            previous_highlight = Highlight::Normal;
             previous_is_separator = c.is_separator();
             i += 1;
         }
@@ -910,6 +886,12 @@ mod tests_editor_update_syntax {
         assert_eq!(
             [H, H, H, H, H, H].to_vec(),
             editor_update_syntax(syntax, "abc123")
+        );
+        assert_eq!([N, N, N, N].to_vec(), editor_update_syntax(syntax, "1.23"));
+        // `kilo` will highlight this as a single number
+        assert_eq!(
+            [N, N, N, N, N, N, N].to_vec(),
+            editor_update_syntax(syntax, "1.23.45")
         );
     }
 
