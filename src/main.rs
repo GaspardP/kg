@@ -136,6 +136,7 @@ enum Event {
 #[derive(Clone, Copy, Debug, std::cmp::PartialEq)]
 enum Highlight {
     Comment,
+    CommentMultiline,
     KeywordReserved,
     KeywordType,
     Match,
@@ -162,6 +163,7 @@ struct EditorSyntax {
     keyword_type: &'static [&'static str],
     /// Marker for start of comment
     single_line_comment_start: Option<&'static str>,
+    multi_line_comment_markers: Option<(&'static str, &'static str)>,
 }
 
 /// typedef struct erow {
@@ -249,7 +251,7 @@ const RS_HL_KW_TYPE: [&str; 17] = [
 ///     "c",
 ///     C_HL_extensions,
 ///     C_HL_keywords,
-///     "//",
+///     "//", "/*", "*/",
 ///     HL_HIGHLIGHT_NUMBERS
 ///   },
 /// };
@@ -261,6 +263,7 @@ const HLDB: &[EditorSyntax] = &[
         keyword_reserved: &C_HL_KW_RESERVED,
         keyword_type: &C_HL_KW_TYPE,
         single_line_comment_start: Some("//"),
+        multi_line_comment_markers: Some(("/*", "*/")),
     },
     EditorSyntax {
         file_type: "rust",
@@ -269,6 +272,7 @@ const HLDB: &[EditorSyntax] = &[
         keyword_reserved: &RS_HL_KW_RESERVED,
         keyword_type: &RS_HL_KW_TYPE,
         single_line_comment_start: Some("//"),
+        multi_line_comment_markers: Some(("/*", "*/")),
     },
 ];
 
@@ -653,6 +657,15 @@ fn highlight_single_line_comment(
     Some(i)
 }
 
+fn highlight_multi_line_comment(
+    _hl: &mut [Highlight],
+    _chars: &[char],
+    mut _i: usize,
+    _multi_line_comment_markers: Option<(&str, &str)>,
+) -> Option<usize> {
+    None
+}
+
 fn highlight_keyword(
     hl: &mut [Highlight],
     chars: &[char],
@@ -795,6 +808,9 @@ fn editor_update_syntax(syntax_opt: Option<&EditorSyntax>, render: &str) -> Vec<
                 highlight_single_line_comment(&mut hl, &chars, i, syntax.single_line_comment_start)
             })
             .or_else(|| {
+                highlight_multi_line_comment(&mut hl, &chars, i, syntax.multi_line_comment_markers)
+            })
+            .or_else(|| {
                 highlight_keyword(
                     &mut hl,
                     &chars,
@@ -929,10 +945,12 @@ fn editor_syntax_to_color(h: Highlight) -> &'static [u8] {
         BLUE_FOREGROUND, CYAN_FOREGROUND, DEFAULT_FOREGROUND, GREEN_FOREGROUND, MAGENTA_FOREGROUND,
         RED_FOREGROUND, YELLOW_FOREGROUND,
     };
-    use Highlight::{Comment, KeywordReserved, KeywordType, Match, Normal, Number, String};
+    use Highlight::{
+        Comment, CommentMultiline, KeywordReserved, KeywordType, Match, Normal, Number, String,
+    };
 
     match h {
-        Comment => CYAN_FOREGROUND,
+        Comment | CommentMultiline => CYAN_FOREGROUND,
         KeywordReserved => YELLOW_FOREGROUND,
         KeywordType => GREEN_FOREGROUND,
         Match => BLUE_FOREGROUND,
