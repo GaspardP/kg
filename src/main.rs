@@ -555,18 +555,11 @@ impl IsSeparator for char {
     }
 }
 
-fn should_highlight_as_digits(syntax_flags: u8, c: char, previous_is_separator: bool) -> bool {
-    (HL_HIGHLIGHT_NUMBERS == (syntax_flags & HL_HIGHLIGHT_NUMBERS))
-        && c.is_digit(10)
-        && previous_is_separator
+fn should_highlight_as_digits(syntax_flags: u8, c: char) -> bool {
+    (HL_HIGHLIGHT_NUMBERS == (syntax_flags & HL_HIGHLIGHT_NUMBERS)) && c.is_digit(10)
 }
 
-fn highlight_digits(
-    hl: &mut [Highlight],
-    chars: &[char],
-    i: &mut usize,
-    previous_is_separator: &mut bool,
-) {
+fn highlight_digits(hl: &mut [Highlight], chars: &[char], i: &mut usize) {
     hl[*i] = Highlight::Number;
     *i += 1;
     while *i < chars.len() {
@@ -578,19 +571,13 @@ fn highlight_digits(
             break;
         }
     }
-    *previous_is_separator = false;
 }
 
 fn should_highlight_as_string(syntax_flags: u8, c: char) -> bool {
     (HL_HIGHLIGHT_STRINGS == (syntax_flags & HL_HIGHLIGHT_STRINGS)) && ('"' == c || '\'' == c)
 }
 
-fn highlight_string(
-    hl: &mut [Highlight],
-    chars: &[char],
-    i: &mut usize,
-    previous_is_separator: &mut bool,
-) {
+fn highlight_string(hl: &mut [Highlight], chars: &[char], i: &mut usize) {
     let open_char = chars[*i];
     hl[*i] = Highlight::String;
     *i += 1;
@@ -601,7 +588,6 @@ fn highlight_string(
 
         if c == open_char {
             // End of string
-            *previous_is_separator = c.is_separator();
             *i += 1;
             return;
         } else if '\\' == c {
@@ -613,7 +599,6 @@ fn highlight_string(
         }
         *i += 1;
     }
-    *previous_is_separator = true;
 }
 
 fn should_highlight_as_single_line_comment(
@@ -636,31 +621,20 @@ fn should_highlight_as_single_line_comment(
     }
 }
 
-fn highlight_single_line_comment(
-    hl: &mut [Highlight],
-    i: &mut usize,
-    previous_is_separator: &mut bool,
-) {
+fn highlight_single_line_comment(hl: &mut [Highlight], i: &mut usize) {
     // Set the rest of the line as comment
     while *i < hl.len() {
         hl[*i] = Highlight::Comment;
         *i += 1;
     }
-    // End of line so it doesn't matter much
-    *previous_is_separator = true;
 }
 
 fn should_highlight_as_keyword(
     chars: &[char],
     i: usize,
-    previous_is_separator: bool,
     syntax_keyword_type: &[&str],
     syntax_keyword_reserved: &[&str],
 ) -> bool {
-    if !previous_is_separator {
-        return false;
-    }
-
     let mut j = i + 1;
 
     while j < chars.len() {
@@ -693,7 +667,6 @@ fn highlight_keyword(
     i: &mut usize,
     syntax_keyword_type: &[&str],
     syntax_keyword_reserved: &[&str],
-    previous_is_separator: &mut bool,
 ) {
     let mut j: usize = *i + 1;
 
@@ -712,7 +685,6 @@ fn highlight_keyword(
                 *h = Highlight::KeywordReserved;
             }
             *i = j;
-            *previous_is_separator = false;
             return;
         }
     }
@@ -723,7 +695,6 @@ fn highlight_keyword(
                 *h = Highlight::KeywordType;
             }
             *i = j;
-            *previous_is_separator = false;
             return;
         }
     }
@@ -809,30 +780,24 @@ fn editor_update_syntax(syntax_opt: Option<&EditorSyntax>, render: &str) -> Vec<
 
     let chars: Vec<char> = render.chars().collect();
     let mut i: usize = 0;
-    let mut previous_is_separator = true;
 
     while i < chars.len() {
         let c = chars[i];
 
-        let is_digits = should_highlight_as_digits(syntax.flags, c, previous_is_separator);
+        let is_digits = should_highlight_as_digits(syntax.flags, c);
         let is_string = should_highlight_as_string(syntax.flags, c);
 
         let is_single_line_comment =
             should_highlight_as_single_line_comment(syntax.single_line_comment_start, &chars, i);
-        let is_keyword = should_highlight_as_keyword(
-            &chars,
-            i,
-            previous_is_separator,
-            syntax.keyword_type,
-            syntax.keyword_reserved,
-        );
+        let is_keyword =
+            should_highlight_as_keyword(&chars, i, syntax.keyword_type, syntax.keyword_reserved);
 
         if is_string {
-            highlight_string(&mut hl, &chars, &mut i, &mut previous_is_separator);
+            highlight_string(&mut hl, &chars, &mut i);
         } else if is_digits {
-            highlight_digits(&mut hl, &chars, &mut i, &mut previous_is_separator);
+            highlight_digits(&mut hl, &chars, &mut i);
         } else if is_single_line_comment {
-            highlight_single_line_comment(&mut hl, &mut i, &mut previous_is_separator);
+            highlight_single_line_comment(&mut hl, &mut i);
         } else if is_keyword {
             highlight_keyword(
                 &mut hl,
@@ -840,11 +805,14 @@ fn editor_update_syntax(syntax_opt: Option<&EditorSyntax>, render: &str) -> Vec<
                 &mut i,
                 syntax.keyword_type,
                 syntax.keyword_reserved,
-                &mut previous_is_separator,
             );
-        } else {
-            previous_is_separator = c.is_separator();
+        } else if c.is_separator() {
             i += 1;
+        } else {
+            eprintln!("if else");
+            while i < chars.len() && !chars[i].is_separator() {
+                i += 1;
+            }
         }
     }
 
