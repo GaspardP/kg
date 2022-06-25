@@ -1736,6 +1736,11 @@ fn editor_scroll(editor_config: &mut EditorConfig) {
 ///         abAppend(ab, "\x1b[7m", 4);
 ///         abAppend(ab, &sym, 1);
 ///         abAppend(ab, "\x1b[m", 3);
+///         if (current_color != -1) {
+///           char buf[16];
+///           int clen = snprintf(buf, sizeof(buf), "\x1b[%dm", current_color);
+///           abAppend(ab, buf, clen);
+///         }
 ///       } else if (hl[j] == HL_NORMAL) {
 ///         if (current_color != -1) {
 ///           abAppend(ab, "\x1b[39m", 5);
@@ -1781,6 +1786,9 @@ fn editor_draw_rows(editor_config: &EditorConfig, ab: &mut Vec<u8>) {
                     ab.extend(INVERT_COLOUR);
                     ab.push(sym);
                     ab.extend(NORMAL_FORMAT);
+                    if Highlight::Normal != highlight {
+                        ab.extend(editor_syntax_to_color(highlight));
+                    }
                 } else if highlight != hl[line_begin + i] {
                     highlight = hl[line_begin + i];
                     ab.extend(editor_syntax_to_color(highlight));
