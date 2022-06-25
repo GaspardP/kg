@@ -1731,7 +1731,12 @@ fn editor_scroll(editor_config: &mut EditorConfig) {
 ///     int current_color = -1;
 ///     int j;
 ///     for (j = 0; j < len; j++) {
-///       if (hl[j] == HL_NORMAL) {
+///       if (iscntrl(c[j])) {
+///         char sym = (c[j] <= 26) ? '@' + c[j] : '?';
+///         abAppend(ab, "\x1b[7m", 4);
+///         abAppend(ab, &sym, 1);
+///         abAppend(ab, "\x1b[m", 3);
+///       } else if (hl[j] == HL_NORMAL) {
 ///         if (current_color != -1) {
 ///           abAppend(ab, "\x1b[39m", 5);
 ///           current_color = -1;
@@ -1771,7 +1776,12 @@ fn editor_draw_rows(editor_config: &EditorConfig, ab: &mut Vec<u8>) {
             let line_begin = min(file_col, line.len());
             let line_end = min(line.len(), screen_cols + file_col);
             for (i, b) in line[line_begin..line_end].bytes().enumerate() {
-                if highlight != hl[line_begin + i] {
+                if is_ctrl(b) {
+                    let sym: u8 = if b <= 26 { b'@' + b } else { b'?' };
+                    ab.extend(INVERT_COLOUR);
+                    ab.push(sym);
+                    ab.extend(NORMAL_FORMAT);
+                } else if highlight != hl[line_begin + i] {
                     highlight = hl[line_begin + i];
                     ab.extend(editor_syntax_to_color(highlight));
                 }
