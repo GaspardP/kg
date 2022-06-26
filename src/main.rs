@@ -695,43 +695,52 @@ fn highlight_multi_line_comment(
     mut i: usize,
     multi_line_comment_markers: Option<(&str, &str)>,
 ) -> Option<usize> {
-    if let Some((comment_start, comment_end)) = multi_line_comment_markers {
-        let cs_len = comment_start.len();
-        if i + cs_len <= chars.len() {
-            let cs: String = chars.iter().skip(i).take(cs_len).collect();
-            if comment_start == cs {
-                let hl = &mut row.hl;
-                row.hl_open_comment = true;
-                // Mark `comment_start` as comment
-                for h in hl.iter_mut().skip(i).take(cs_len) {
-                    *h = Highlight::CommentMultiline;
-                }
-                i += cs_len;
-                // Look for `comment_end` in the rest of the line
-                let ce_len = comment_end.len();
-                while i + ce_len <= hl.len() {
-                    let part: String = chars[i..i + ce_len].iter().collect();
-                    if part == comment_end {
-                        row.hl_close_comment = true;
-                        for h in hl.iter_mut().skip(i).take(ce_len) {
-                            *h = Highlight::CommentMultiline;
-                        }
-                        return Some(i + ce_len);
-                    }
-                    hl[i] = Highlight::CommentMultiline;
-                    i += 1;
-                }
-                // No marker for EOC and no space left to have one. Comment the
-                // rest of the line.
-                while i < hl.len() {
-                    hl[i] = Highlight::CommentMultiline;
-                    i += 1;
-                }
-                return Some(i);
+    let (comment_start, comment_end) = multi_line_comment_markers?;
+    let cs_len = comment_start.len();
+
+    // Only look for the start of a comment if it is not already open
+    if !row.is_comment_open() && i + cs_len <= chars.len() {
+        let hl = &mut row.hl;
+        let cs: String = chars.iter().skip(i).take(cs_len).collect();
+        if comment_start == cs {
+            row.hl_open_comment = true;
+            row.hl_close_comment = false;
+            // Mark `comment_start` as comment
+            for h in hl.iter_mut().skip(i).take(cs_len) {
+                *h = Highlight::CommentMultiline;
             }
+            i += cs_len;
         }
     }
-    None
+
+    if row.is_comment_open() {
+        // Look for `comment_end` in the rest of the line
+        let hl = &mut row.hl;
+        let ce_len = comment_end.len();
+        while i + ce_len <= hl.len() {
+            let part: String = chars[i..i + ce_len].iter().collect();
+            if part == comment_end {
+                row.hl_close_comment = true;
+                for h in hl.iter_mut().skip(i).take(ce_len) {
+                    *h = Highlight::CommentMultiline;
+                }
+                return Some(i + ce_len);
+            }
+            hl[i] = Highlight::CommentMultiline;
+            i += 1;
+        }
+        // No marker for EOC and no space left to have one. Comment the
+        // rest of the line.
+        while i < hl.len() {
+            hl[i] = Highlight::CommentMultiline;
+            i += 1;
+        }
+        Some(i)
+    } else {
+        // Neither the start of a comment was found nor a comment was opened on
+        // a previous line
+        None
+    }
 }
 
 fn highlight_keyword(
@@ -857,7 +866,7 @@ fn highlight_default(chars: &[char], mut i: usize) -> usize {
 ///   prev_sep = is_separator(c);
 ///   i++;
 /// }
-fn editor_update_syntax(syntax_opt: Option<&EditorSyntax>, row: &mut ERow, _is_comment_open: bool) {
+fn editor_update_syntax(syntax_opt: Option<&EditorSyntax>, row: &mut ERow, is_comment_open: bool) {
     let render = &row.render;
     row.hl.clear();
     row.hl.resize(render.len(), Highlight::Normal);
@@ -867,7 +876,7 @@ fn editor_update_syntax(syntax_opt: Option<&EditorSyntax>, row: &mut ERow, _is_c
     }
     let syntax = syntax_opt.unwrap();
 
-    row.hl_open_comment = false;
+    row.hl_open_comment = is_comment_open;
     row.hl_close_comment = false;
     let chars: Vec<char> = render.chars().collect();
     let mut i: usize = 0;
@@ -962,7 +971,13 @@ mod tests_editor_update_syntax {
         assert_hl!([M, M, M, M, M, M, M, M, H, H], "/* // */ b");
         assert_hl!([M, M, M, M, M, M, M, M, H, H], "/* \"\" */ b");
         assert_hl!([H, M, M, M, M], " /* a");
-        // assert_hl!([M, M, M, M, H, H], "a /* b", "c */ d");
+    }
+
+    #[test]
+    fn test2_multi_lines_comments() {
+        assert_hl!([M, M, M, M, H, H], "a /* b", "c */ d");
+        assert_hl!([M, M, M, M, M, M, M, M], "/*", "c *//* d");
+        assert_hl!([M, M, M, M, M, M, M, M, M, M, H], "/*", "*//**//**/d");
     }
 
     #[test]
