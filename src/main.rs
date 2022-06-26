@@ -658,11 +658,44 @@ fn highlight_single_line_comment(
 }
 
 fn highlight_multi_line_comment(
-    _hl: &mut [Highlight],
-    _chars: &[char],
-    mut _i: usize,
-    _multi_line_comment_markers: Option<(&str, &str)>,
+    hl: &mut [Highlight],
+    chars: &[char],
+    mut i: usize,
+    multi_line_comment_markers: Option<(&str, &str)>,
 ) -> Option<usize> {
+    if let Some((comment_start, comment_end)) = multi_line_comment_markers {
+        let cs_len = comment_start.len();
+        if i + cs_len <= chars.len() {
+            let cs: String = chars.iter().skip(i).take(cs_len).collect();
+            if comment_start == cs {
+                // Mark `comment_start` as comment
+                for h in hl.iter_mut().skip(i).take(cs_len) {
+                    *h = Highlight::CommentMultiline;
+                }
+                i += cs_len;
+                // Look for `comment_end` in the rest of the line
+                let ce_len = comment_end.len();
+                while i + ce_len <= hl.len() {
+                    let part: String = chars[i..i + ce_len].iter().collect();
+                    if part == comment_end {
+                        for h in hl.iter_mut().skip(i).take(ce_len) {
+                            *h = Highlight::CommentMultiline;
+                        }
+                        return Some(i + ce_len);
+                    }
+                    hl[i] = Highlight::CommentMultiline;
+                    i += 1;
+                }
+                // No marker for EOC and no space left to have one. Comment the
+                // rest of the line.
+                while i < hl.len() {
+                    hl[i] = Highlight::CommentMultiline;
+                    i += 1;
+                }
+                return Some(i);
+            }
+        }
+    }
     None
 }
 
@@ -831,6 +864,7 @@ mod tests_editor_update_syntax {
     use super::{editor_update_syntax, EditorSyntax, Highlight, HLDB};
 
     const C: Highlight = Highlight::Comment;
+    const M: Highlight = Highlight::CommentMultiline;
     const R: Highlight = Highlight::KeywordReserved;
     const T: Highlight = Highlight::KeywordType;
     // Only used during the match process and not the `editor_update_syntax`
@@ -880,6 +914,48 @@ mod tests_editor_update_syntax {
         assert_eq!([C, C, C, C].to_vec(), editor_update_syntax(syntax, "//12"));
         assert_eq!([N, H, N].to_vec(), editor_update_syntax(syntax, "1/2"));
         assert_eq!([H, C, C].to_vec(), editor_update_syntax(syntax, "a//"));
+    }
+
+    #[test]
+    fn test_multi_lines_comments() {
+        let syntax: Option<&EditorSyntax> = Some(&HLDB[0]);
+        assert_eq!([M, M, M, M].to_vec(), editor_update_syntax(syntax, "/**/"));
+        assert_eq!(
+            [M, M, M, M, M].to_vec(),
+            editor_update_syntax(syntax, "/* */"),
+            "/* */"
+        );
+        assert_eq!(
+            [H, H, M, M, M, M, M].to_vec(),
+            editor_update_syntax(syntax, "a /*b*/"),
+            "/*a*/"
+        );
+        assert_eq!(
+            [M, M, M, M, M, M, M, H, H].to_vec(),
+            editor_update_syntax(syntax, "/* a */ b"),
+            "/* a */ b"
+        );
+        assert_eq!(
+            [M, M, M, M, M, M, M, M, H, H].to_vec(),
+            editor_update_syntax(syntax, "/* // */ b"),
+            "/* // */ b"
+        );
+        assert_eq!(
+            [M, M, M, M, M, M, M, M, H, H].to_vec(),
+            editor_update_syntax(syntax, "/* \"\" */ b"),
+            "/* \"\" */ b"
+        );
+
+        assert_eq!(
+            [H, M, M, M, M].to_vec(),
+            editor_update_syntax(syntax, " /* a"),
+            " /* a"
+        );
+        // assert_eq!(
+        //     [M, M, M, M, H, H].to_vec(),
+        //     editor_update_syntax(syntax, "a */ a"),
+        //     "a */ a"
+        // );
     }
 
     #[test]
