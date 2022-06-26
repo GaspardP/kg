@@ -172,11 +172,31 @@ struct EditorSyntax {
 ///   char *chars;
 ///   char *render;
 ///   unsigned char *hl;
+///   int hl_open_comment;
 /// } erow;
 struct ERow {
     chars: String,
-    hl: Vec<Highlight>,
     render: String,
+    hl: Vec<Highlight>,
+    hl_close_comment: bool,
+    hl_open_comment: bool,
+}
+
+impl ERow {
+    fn from(syntax_opt: Option<&EditorSyntax>, chars: &str) -> ERow {
+        let chars = chars.to_string();
+        let render = editor_update_row(TAB_STOP, &chars);
+        let hl = Vec::with_capacity(chars.len());
+        let mut row = ERow {
+            chars,
+            render,
+            hl,
+            hl_open_comment: false,
+            hl_close_comment: false,
+        };
+        editor_update_syntax(syntax_opt, &mut row);
+        row
+    }
 }
 
 struct StatusMessage {
@@ -822,46 +842,47 @@ fn highlight_default(chars: &[char], mut i: usize) -> usize {
 ///   prev_sep = is_separator(c);
 ///   i++;
 /// }
-fn editor_update_syntax(syntax_opt: Option<&EditorSyntax>, render: &str) -> Vec<Highlight> {
-    let mut hl = vec![Highlight::Normal; render.len()];
+fn editor_update_syntax(syntax_opt: Option<&EditorSyntax>, row: &mut ERow) {
+    let render = &row.render;
+    let hl = &mut row.hl;
+    hl.resize(render.len(), Highlight::Normal);
 
-    let syntax = if let Some(syntax) = syntax_opt {
-        syntax
-    } else {
-        return hl;
-    };
+    if syntax_opt.is_none() {
+        return;
+    }
+    let syntax = syntax_opt.unwrap();
 
     let chars: Vec<char> = render.chars().collect();
     let mut i: usize = 0;
 
     while i < chars.len() {
-        i = highlight_string(&mut hl, &chars, i, syntax.flags)
-            .or_else(|| highlight_digits(&mut hl, &chars, i, syntax.flags))
+        i = highlight_string(hl, &chars, i, syntax.flags)
+            .or_else(|| highlight_digits(hl, &chars, i, syntax.flags))
             .or_else(|| {
-                highlight_single_line_comment(&mut hl, &chars, i, syntax.single_line_comment_start)
+                highlight_single_line_comment(hl, &chars, i, syntax.single_line_comment_start)
             })
             .or_else(|| {
-                highlight_multi_line_comment(&mut hl, &chars, i, syntax.multi_line_comment_markers)
+                highlight_multi_line_comment(hl, &chars, i, syntax.multi_line_comment_markers)
             })
             .or_else(|| {
-                highlight_keyword(
-                    &mut hl,
-                    &chars,
-                    i,
-                    syntax.keyword_type,
-                    syntax.keyword_reserved,
-                )
+                highlight_keyword(hl, &chars, i, syntax.keyword_type, syntax.keyword_reserved)
             })
             .or_else(|| highlight_separator(&chars, i))
             .unwrap_or_else(|| highlight_default(&chars, i));
     }
-
-    hl
 }
 
 #[cfg(test)]
 mod tests_editor_update_syntax {
-    use super::{editor_update_syntax, EditorSyntax, Highlight, HLDB};
+    use super::{ERow, Highlight, HLDB};
+
+    macro_rules! assert_hl {
+        ($hl_array: expr, $chars: expr) => {
+            let syntax = Some(&HLDB[0]);
+            let row = ERow::from(syntax, $chars);
+            assert_eq!($hl_array.to_vec(), row.hl, "pattern=`{}`", $chars);
+        };
+    }
 
     const C: Highlight = Highlight::Comment;
     const M: Highlight = Highlight::CommentMultiline;
@@ -875,134 +896,71 @@ mod tests_editor_update_syntax {
 
     #[test]
     fn test_text() {
-        let syntax: Option<&EditorSyntax> = Some(&HLDB[0]);
-        assert_eq!([H, H, H].to_vec(), editor_update_syntax(syntax, "abc"));
+        assert_hl!([H, H, H], "abc");
     }
 
     #[test]
     fn test_digits() {
-        let syntax: Option<&EditorSyntax> = Some(&HLDB[0]);
-        assert_eq!([N, N, N].to_vec(), editor_update_syntax(syntax, "123"));
-        assert_eq!(
-            [H, H, H, H, N, N, N].to_vec(),
-            editor_update_syntax(syntax, "abc 123")
-        );
+        assert_hl!([N, N, N], "123");
+        assert_hl!([H, H, H, H, N, N, N], "abc 123");
         // Invalid number but we decided to color it anyway
-        assert_eq!(
-            [N, N, N, H, H, H].to_vec(),
-            editor_update_syntax(syntax, "123abc")
-        );
-        assert_eq!(
-            [H, H, H, H, H, H].to_vec(),
-            editor_update_syntax(syntax, "abc123")
-        );
-        assert_eq!([N, N, N, N].to_vec(), editor_update_syntax(syntax, "1.23"));
+        assert_hl!([N, N, N, H, H, H], "123abc");
+        assert_hl!([H, H, H, H, H, H], "abc123");
+        assert_hl!([N, N, N, N], "1.23");
         // `kilo` will highlight this as a single number
-        assert_eq!(
-            [N, N, N, N, N, N, N].to_vec(),
-            editor_update_syntax(syntax, "1.23.45")
-        );
+        assert_hl!([N, N, N, N, N, N, N], "1.23.45");
     }
 
     #[test]
     fn test_comments() {
-        let syntax: Option<&EditorSyntax> = Some(&HLDB[0]);
-        assert_eq!(
-            [H, H, H, H, C, C, C, C, C, C].to_vec(),
-            editor_update_syntax(syntax, "abc // abc")
-        );
-        assert_eq!([C, C, C, C].to_vec(), editor_update_syntax(syntax, "//12"));
-        assert_eq!([N, H, N].to_vec(), editor_update_syntax(syntax, "1/2"));
-        assert_eq!([H, C, C].to_vec(), editor_update_syntax(syntax, "a//"));
+        assert_hl!([H, H, H, H, C, C, C, C, C, C], "abc // abc");
+        assert_hl!([C, C, C, C], "//12");
+        assert_hl!([N, H, N], "1/2");
+        assert_hl!([H, C, C], "a//");
     }
 
     #[test]
     fn test_multi_lines_comments() {
-        let syntax: Option<&EditorSyntax> = Some(&HLDB[0]);
-        assert_eq!([M, M, M, M].to_vec(), editor_update_syntax(syntax, "/**/"));
-        assert_eq!(
-            [M, M, M, M, M].to_vec(),
-            editor_update_syntax(syntax, "/* */"),
-            "/* */"
-        );
-        assert_eq!(
-            [H, H, M, M, M, M, M].to_vec(),
-            editor_update_syntax(syntax, "a /*b*/"),
-            "/*a*/"
-        );
-        assert_eq!(
-            [M, M, M, M, M, M, M, H, H].to_vec(),
-            editor_update_syntax(syntax, "/* a */ b"),
-            "/* a */ b"
-        );
-        assert_eq!(
-            [M, M, M, M, M, M, M, M, H, H].to_vec(),
-            editor_update_syntax(syntax, "/* // */ b"),
-            "/* // */ b"
-        );
-        assert_eq!(
-            [M, M, M, M, M, M, M, M, H, H].to_vec(),
-            editor_update_syntax(syntax, "/* \"\" */ b"),
-            "/* \"\" */ b"
-        );
-
-        assert_eq!(
-            [H, M, M, M, M].to_vec(),
-            editor_update_syntax(syntax, " /* a"),
-            " /* a"
-        );
-        // assert_eq!(
-        //     [M, M, M, M, H, H].to_vec(),
-        //     editor_update_syntax(syntax, "a */ a"),
+        assert_hl!([M, M, M, M], "/**/");
+        assert_hl!([M, M, M, M, M], "/* */");
+        assert_hl!([H, H, M, M, M, M, M], "a /*b*/");
+        assert_hl!([M, M, M, M, M, M, M, H, H], "/* a */ b");
+        assert_hl!([M, M, M, M, M, M, M, M, H, H], "/* // */ b");
+        assert_hl!([M, M, M, M, M, M, M, M, H, H], "/* \"\" */ b");
+        assert_hl!([H, M, M, M, M], " /* a");
+        // assert_hl!(
+        //     [M, M, M, M, H, H],
         //     "a */ a"
         // );
     }
 
     #[test]
     fn test_strings() {
-        let syntax: Option<&EditorSyntax> = Some(&HLDB[0]);
-        assert_eq!(
-            [H, H, S, S, S, H, H].to_vec(),
-            editor_update_syntax(syntax, "a \"b\" c")
-        );
-        assert_eq!(
-            [H, H, S, S, S, S, S, H, H].to_vec(),
-            editor_update_syntax(syntax, "a \"123\" c")
-        );
-        assert_eq!(
-            [H, H, S, S, S, S].to_vec(),
-            editor_update_syntax(syntax, "a \"123")
-        );
+        assert_hl!([H, H, S, S, S, H, H], "a \"b\" c");
+        assert_hl!([H, H, S, S, S, S, S, H, H], "a \"123\" c");
+        assert_hl!([H, H, S, S, S, S], "a \"123");
     }
 
     #[test]
     fn test_keywords() {
-        let syntax: Option<&EditorSyntax> = Some(&HLDB[0]);
+        assert_hl!([R, R], "if");
 
-        assert_eq!([R, R].to_vec(), editor_update_syntax(syntax, "if"));
-
-        assert_eq!([T, T, T].to_vec(), editor_update_syntax(syntax, "int"));
-        assert_eq!(
-            [R, R, H, H, H, H, H, H, N, H].to_vec(),
-            editor_update_syntax(syntax, "if (a < 3)")
-        );
-        assert_eq!(
-            [T, T, T, H, H, H, H, H, N, N, H].to_vec(),
-            editor_update_syntax(syntax, "int n = 20;")
-        );
-        assert_eq!(
-            [T, T, T, H, H, H, H, H, N, N, H, H, C, C, C, C].to_vec(),
-            editor_update_syntax(syntax, "int n = 20; // a")
+        assert_hl!([T, T, T], "int");
+        assert_hl!([R, R, H, H, H, H, H, H, N, H], "if (a < 3)");
+        assert_hl!([T, T, T, H, H, H, H, H, N, N, H], "int n = 20;");
+        assert_hl!(
+            [T, T, T, H, H, H, H, H, N, N, H, H, C, C, C, C],
+            "int n = 20; // a"
         );
 
-        assert_eq!(
-            [H, H, H, H, R, R, H, H, H, H, C, C, C, C, C].to_vec(),
-            editor_update_syntax(syntax, "abc if ee // ad")
+        assert_hl!(
+            [H, H, H, H, R, R, H, H, H, H, C, C, C, C, C],
+            "abc if ee // ad"
         );
 
-        assert_eq!(
-            [H, H, H, H, H, R, R, H, H, H, H, C, C, C, C, C].to_vec(),
-            editor_update_syntax(syntax, "abcd if ee // ad")
+        assert_hl!(
+            [H, H, H, H, H, R, R, H, H, H, H, C, C, C, C, C],
+            "abcd if ee // ad"
         );
     }
 }
@@ -1330,7 +1288,7 @@ fn editor_row_insert_char(syntax: Option<&EditorSyntax>, row: &mut ERow, at: usi
         row.chars.push(c);
     }
     row.render = editor_update_row(TAB_STOP, &row.chars);
-    row.hl = editor_update_syntax(syntax, &row.render);
+    editor_update_syntax(syntax, row);
 }
 
 /// row->chars = realloc(row->chars, row->size + len + 1);
@@ -1342,7 +1300,7 @@ fn editor_row_insert_char(syntax: Option<&EditorSyntax>, row: &mut ERow, at: usi
 fn editor_row_append_string(syntax: Option<&EditorSyntax>, row: &mut ERow, s: &str) {
     row.chars.push_str(s);
     row.render = editor_update_row(TAB_STOP, &row.chars);
-    row.hl = editor_update_syntax(syntax, &row.render);
+    editor_update_syntax(syntax, row);
 }
 
 /// Removes the character on the left of the cursor.
@@ -1358,7 +1316,7 @@ fn editor_row_delete_char(syntax: Option<&EditorSyntax>, row: &mut ERow, at: usi
     }
     row.chars.remove(at - 1);
     row.render = editor_update_row(TAB_STOP, &row.chars);
-    row.hl = editor_update_syntax(syntax, &row.render);
+    editor_update_syntax(syntax, row);
 }
 
 /*** editor operations ***/
@@ -1380,11 +1338,11 @@ fn editor_insert_char(editor_config: &mut EditorConfig, c: char) {
     let cx = cursor_x as usize;
     let cy = cursor_y as usize;
     if editor_config.rows.len() == cy {
-        let chars = c.to_string();
-        let render = editor_update_row(TAB_STOP, &chars);
-        let hl = editor_update_syntax(editor_config.syntax, &render);
-        editor_config.rows.push(ERow { chars, hl, render });
+        // Add a new line at the end of the file
+        let row = ERow::from(editor_config.syntax, &c.to_string());
+        editor_config.rows.push(row);
     } else if let Some(row) = editor_config.rows.get_mut(cy) {
+        // Insert char in existing line
         editor_row_insert_char(editor_config.syntax, row, cx, c);
     }
     editor_config.dirty = true;
@@ -1403,28 +1361,20 @@ fn editor_insert_char(editor_config: &mut EditorConfig, c: char) {
 /// E.cy++;
 /// E.cx = 0;
 fn editor_insert_newline(editor_config: &mut EditorConfig) {
+    let syntax = editor_config.syntax;
     let (cursor_x, cursor_y) = editor_config.cursor;
     let cy = cursor_y as usize;
     if (0, 0) == (cursor_x, cursor_y) || editor_config.rows.len() == cy {
-        editor_config.rows.insert(
-            cy,
-            ERow {
-                chars: "".to_string(),
-                hl: Vec::new(),
-                render: "".to_string(),
-            },
-        );
+        // Add an empty line at the beginning or the end of the file
+        editor_config.rows.insert(cy, ERow::from(syntax, ""));
     } else if let Some(mut row) = editor_config.rows.get_mut(cy) {
         let cx = cursor_x as usize;
         let chars = row.chars.split_off(cx);
         row.render = editor_update_row(TAB_STOP, &row.chars);
-        row.hl = editor_update_syntax(editor_config.syntax, &row.render);
+        editor_update_syntax(syntax, row);
         // New line
-        let render = editor_update_row(TAB_STOP, &chars);
-        let hl = editor_update_syntax(editor_config.syntax, &render);
-        editor_config
-            .rows
-            .insert(cy + 1, ERow { chars, hl, render });
+        let row = ERow::from(syntax, &chars);
+        editor_config.rows.insert(cy + 1, row);
     }
 }
 
@@ -1538,9 +1488,8 @@ fn editor_open(editor_config: &mut EditorConfig, filename: &str) -> Result<(), E
     let mut lines = reader.lines();
 
     while let Some(Ok(chars)) = lines.next() {
-        let render = editor_update_row(TAB_STOP, &chars);
-        let hl = editor_update_syntax(editor_config.syntax, &render);
-        editor_config.rows.push(ERow { chars, hl, render });
+        let row = ERow::from(editor_config.syntax, &chars);
+        editor_config.rows.push(row);
     }
 
     editor_config.dirty = false;
