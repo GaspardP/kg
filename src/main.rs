@@ -183,7 +183,7 @@ struct ERow {
 }
 
 impl ERow {
-    fn from(syntax_opt: Option<&EditorSyntax>, chars: &str) -> ERow {
+    fn from(syntax_opt: Option<&EditorSyntax>, chars: &str, is_comment_open: bool) -> ERow {
         let chars = chars.to_string();
         let render = editor_update_row(TAB_STOP, &chars);
         let hl = Vec::with_capacity(chars.len());
@@ -194,8 +194,20 @@ impl ERow {
             hl_open_comment: false,
             hl_close_comment: false,
         };
-        editor_update_syntax(syntax_opt, &mut row);
+        editor_update_syntax(syntax_opt, &mut row, is_comment_open);
         row
+    }
+
+    fn is_comment_open(&self) -> bool {
+        self.hl_open_comment && !self.hl_close_comment
+    }
+}
+
+fn is_row_comment_open(rows: &[ERow], cy: usize) -> bool {
+    if 0 == cy {
+        false
+    } else {
+        rows.get(cy - 1).map_or(false, ERow::is_comment_open)
     }
 }
 
@@ -678,7 +690,7 @@ fn highlight_single_line_comment(
 }
 
 fn highlight_multi_line_comment(
-    hl: &mut [Highlight],
+    row: &mut ERow,
     chars: &[char],
     mut i: usize,
     multi_line_comment_markers: Option<(&str, &str)>,
@@ -688,6 +700,8 @@ fn highlight_multi_line_comment(
         if i + cs_len <= chars.len() {
             let cs: String = chars.iter().skip(i).take(cs_len).collect();
             if comment_start == cs {
+                let hl = &mut row.hl;
+                row.hl_open_comment = true;
                 // Mark `comment_start` as comment
                 for h in hl.iter_mut().skip(i).take(cs_len) {
                     *h = Highlight::CommentMultiline;
@@ -698,6 +712,7 @@ fn highlight_multi_line_comment(
                 while i + ce_len <= hl.len() {
                     let part: String = chars[i..i + ce_len].iter().collect();
                     if part == comment_end {
+                        row.hl_close_comment = true;
                         for h in hl.iter_mut().skip(i).take(ce_len) {
                             *h = Highlight::CommentMultiline;
                         }
@@ -842,30 +857,43 @@ fn highlight_default(chars: &[char], mut i: usize) -> usize {
 ///   prev_sep = is_separator(c);
 ///   i++;
 /// }
-fn editor_update_syntax(syntax_opt: Option<&EditorSyntax>, row: &mut ERow) {
+fn editor_update_syntax(syntax_opt: Option<&EditorSyntax>, row: &mut ERow, _is_comment_open: bool) {
     let render = &row.render;
-    let hl = &mut row.hl;
-    hl.resize(render.len(), Highlight::Normal);
+    row.hl.clear();
+    row.hl.resize(render.len(), Highlight::Normal);
 
     if syntax_opt.is_none() {
         return;
     }
     let syntax = syntax_opt.unwrap();
 
+    row.hl_open_comment = false;
+    row.hl_close_comment = false;
     let chars: Vec<char> = render.chars().collect();
     let mut i: usize = 0;
 
     while i < chars.len() {
-        i = highlight_string(hl, &chars, i, syntax.flags)
-            .or_else(|| highlight_digits(hl, &chars, i, syntax.flags))
+        i = highlight_string(&mut row.hl, &chars, i, syntax.flags)
+            .or_else(|| highlight_digits(&mut row.hl, &chars, i, syntax.flags))
             .or_else(|| {
-                highlight_single_line_comment(hl, &chars, i, syntax.single_line_comment_start)
+                highlight_single_line_comment(
+                    &mut row.hl,
+                    &chars,
+                    i,
+                    syntax.single_line_comment_start,
+                )
             })
             .or_else(|| {
-                highlight_multi_line_comment(hl, &chars, i, syntax.multi_line_comment_markers)
+                highlight_multi_line_comment(row, &chars, i, syntax.multi_line_comment_markers)
             })
             .or_else(|| {
-                highlight_keyword(hl, &chars, i, syntax.keyword_type, syntax.keyword_reserved)
+                highlight_keyword(
+                    &mut row.hl,
+                    &chars,
+                    i,
+                    syntax.keyword_type,
+                    syntax.keyword_reserved,
+                )
             })
             .or_else(|| highlight_separator(&chars, i))
             .unwrap_or_else(|| highlight_default(&chars, i));
@@ -879,7 +907,13 @@ mod tests_editor_update_syntax {
     macro_rules! assert_hl {
         ($hl_array: expr, $chars: expr) => {
             let syntax = Some(&HLDB[0]);
-            let row = ERow::from(syntax, $chars);
+            let row = ERow::from(syntax, $chars, false);
+            assert_eq!($hl_array.to_vec(), row.hl, "pattern=`{}`", $chars);
+        };
+        ($hl_array: expr, $previous_chars: expr, $chars: expr) => {
+            let syntax = Some(&HLDB[0]);
+            let previous_row = ERow::from(syntax, $previous_chars, false);
+            let row = ERow::from(syntax, $chars, previous_row.is_comment_open());
             assert_eq!($hl_array.to_vec(), row.hl, "pattern=`{}`", $chars);
         };
     }
@@ -928,10 +962,7 @@ mod tests_editor_update_syntax {
         assert_hl!([M, M, M, M, M, M, M, M, H, H], "/* // */ b");
         assert_hl!([M, M, M, M, M, M, M, M, H, H], "/* \"\" */ b");
         assert_hl!([H, M, M, M, M], " /* a");
-        // assert_hl!(
-        //     [M, M, M, M, H, H],
-        //     "a */ a"
-        // );
+        // assert_hl!([M, M, M, M, H, H], "a /* b", "c */ d");
     }
 
     #[test]
@@ -1281,14 +1312,20 @@ fn editor_delete_row(editor_config: &mut EditorConfig, at: usize) -> Option<ERow
 /// row->size++;
 /// row->chars[at] = c;
 /// editorUpdateRow(row);
-fn editor_row_insert_char(syntax: Option<&EditorSyntax>, row: &mut ERow, at: usize, c: char) {
+fn editor_row_insert_char(
+    syntax: Option<&EditorSyntax>,
+    is_comment_open: bool,
+    row: &mut ERow,
+    at: usize,
+    c: char,
+) {
     if row.chars.is_char_boundary(at) {
         row.chars.insert(at, c);
     } else {
         row.chars.push(c);
     }
     row.render = editor_update_row(TAB_STOP, &row.chars);
-    editor_update_syntax(syntax, row);
+    editor_update_syntax(syntax, row, is_comment_open);
 }
 
 /// row->chars = realloc(row->chars, row->size + len + 1);
@@ -1300,7 +1337,10 @@ fn editor_row_insert_char(syntax: Option<&EditorSyntax>, row: &mut ERow, at: usi
 fn editor_row_append_string(syntax: Option<&EditorSyntax>, row: &mut ERow, s: &str) {
     row.chars.push_str(s);
     row.render = editor_update_row(TAB_STOP, &row.chars);
-    editor_update_syntax(syntax, row);
+    // Adding to the end of a known row, we don't need to look at the previous
+    // to know whether we are in a comment or not
+    let is_comment_open = row.is_comment_open();
+    editor_update_syntax(syntax, row, is_comment_open);
 }
 
 /// Removes the character on the left of the cursor.
@@ -1310,13 +1350,18 @@ fn editor_row_append_string(syntax: Option<&EditorSyntax>, row: &mut ERow, s: &s
 /// row->size--;
 /// editorUpdateRow(row);
 /// E.dirty++;
-fn editor_row_delete_char(syntax: Option<&EditorSyntax>, row: &mut ERow, at: usize) {
+fn editor_row_delete_char(
+    syntax: Option<&EditorSyntax>,
+    is_comment_open: bool,
+    row: &mut ERow,
+    at: usize,
+) {
     if at == 0 || row.chars.len() < at {
         return;
     }
     row.chars.remove(at - 1);
     row.render = editor_update_row(TAB_STOP, &row.chars);
-    editor_update_syntax(syntax, row);
+    editor_update_syntax(syntax, row, is_comment_open);
 }
 
 /*** editor operations ***/
@@ -1337,13 +1382,14 @@ fn editor_insert_char(editor_config: &mut EditorConfig, c: char) {
     let (cursor_x, cursor_y) = editor_config.cursor;
     let cx = cursor_x as usize;
     let cy = cursor_y as usize;
+    let is_comment_open = is_row_comment_open(&editor_config.rows, cy);
     if editor_config.rows.len() == cy {
         // Add a new line at the end of the file
-        let row = ERow::from(editor_config.syntax, &c.to_string());
+        let row = ERow::from(editor_config.syntax, &c.to_string(), is_comment_open);
         editor_config.rows.push(row);
     } else if let Some(row) = editor_config.rows.get_mut(cy) {
         // Insert char in existing line
-        editor_row_insert_char(editor_config.syntax, row, cx, c);
+        editor_row_insert_char(editor_config.syntax, is_comment_open, row, cx, c);
     }
     editor_config.dirty = true;
 }
@@ -1364,17 +1410,19 @@ fn editor_insert_newline(editor_config: &mut EditorConfig) {
     let syntax = editor_config.syntax;
     let (cursor_x, cursor_y) = editor_config.cursor;
     let cy = cursor_y as usize;
+    let is_comment_open = is_row_comment_open(&editor_config.rows, cy);
     if (0, 0) == (cursor_x, cursor_y) || editor_config.rows.len() == cy {
         // Add an empty line at the beginning or the end of the file
-        editor_config.rows.insert(cy, ERow::from(syntax, ""));
+        let new_row = ERow::from(syntax, "", is_comment_open);
+        editor_config.rows.insert(cy, new_row);
     } else if let Some(mut row) = editor_config.rows.get_mut(cy) {
         let cx = cursor_x as usize;
         let chars = row.chars.split_off(cx);
         row.render = editor_update_row(TAB_STOP, &row.chars);
-        editor_update_syntax(syntax, row);
+        editor_update_syntax(syntax, row, is_comment_open);
         // New line
-        let row = ERow::from(syntax, &chars);
-        editor_config.rows.insert(cy + 1, row);
+        let new_row = ERow::from(syntax, &chars, row.is_comment_open());
+        editor_config.rows.insert(cy + 1, new_row);
     }
 }
 
@@ -1396,6 +1444,7 @@ fn editor_delete_char(editor_config: &mut EditorConfig) {
     let (cursor_x, cursor_y) = editor_config.cursor;
     let cx = cursor_x as usize;
     let cy = cursor_y as usize;
+    let is_comment_open = is_row_comment_open(&editor_config.rows, cy);
     if editor_config.rows.len() == cy || (0, 0) == editor_config.cursor {
         return;
     } else if 0 == cursor_x {
@@ -1415,7 +1464,7 @@ fn editor_delete_char(editor_config: &mut EditorConfig) {
             );
         }
     } else if let Some(row) = editor_config.rows.get_mut(cy) {
-        editor_row_delete_char(editor_config.syntax, row, cx);
+        editor_row_delete_char(editor_config.syntax, is_comment_open, row, cx);
     }
     editor_config.dirty = true;
 }
@@ -1486,9 +1535,11 @@ fn editor_open(editor_config: &mut EditorConfig, filename: &str) -> Result<(), E
     let file = File::open(filename)?;
     let reader = BufReader::new(file);
     let mut lines = reader.lines();
+    let mut is_comment_open = false;
 
     while let Some(Ok(chars)) = lines.next() {
-        let row = ERow::from(editor_config.syntax, &chars);
+        let row = ERow::from(editor_config.syntax, &chars, is_comment_open);
+        is_comment_open = row.is_comment_open();
         editor_config.rows.push(row);
     }
 
