@@ -1011,6 +1011,34 @@ mod tests_editor_update_syntax {
     }
 }
 
+/// Used to go through subsequent rows and re-apply syntax if a previous row has
+/// opened or closed a comment
+fn editor_propagate_update_syntax(syntax_opt: Option<&EditorSyntax>, rows: &mut [ERow], cy: usize) {
+    if syntax_opt.is_none() {
+        // No need to check for comments if no syntax is activated
+        return;
+    }
+
+    if rows[cy].is_comment_open() {
+        // Comment was opened on the previous line
+        for row in rows.iter_mut().skip(cy + 1) {
+            editor_update_syntax(syntax_opt, row, true);
+            if !row.is_comment_open() {
+                break;
+            }
+        }
+    } else {
+        // Comment was closed on the previous line
+        for row in rows.iter_mut().skip(cy + 1) {
+            if row.is_comment_open() {
+                editor_update_syntax(syntax_opt, row, false);
+            } else {
+                break;
+            }
+        }
+    }
+}
+
 /// switch (hl) {
 ///   case HL_COMMENT: return 36;
 ///   case HL_KEYWORD1: return 33;
@@ -1407,6 +1435,7 @@ fn editor_insert_char(editor_config: &mut EditorConfig, c: char) {
         editor_row_insert_char(editor_config.syntax, is_comment_open, row, cx, c);
     }
     editor_config.dirty = true;
+    editor_propagate_update_syntax(editor_config.syntax, &mut editor_config.rows, cy);
 }
 
 /// if (E.cx == 0) {
@@ -1424,7 +1453,7 @@ fn editor_insert_char(editor_config: &mut EditorConfig, c: char) {
 fn editor_insert_newline(editor_config: &mut EditorConfig) {
     let syntax = editor_config.syntax;
     let (cursor_x, cursor_y) = editor_config.cursor;
-    let cy = cursor_y as usize;
+    let mut cy = cursor_y as usize;
     let is_comment_open = is_row_comment_open(&editor_config.rows, cy);
     if (0, 0) == (cursor_x, cursor_y) || editor_config.rows.len() == cy {
         // Add an empty line at the beginning or the end of the file
@@ -1436,9 +1465,11 @@ fn editor_insert_newline(editor_config: &mut EditorConfig) {
         row.render = editor_update_row(TAB_STOP, &row.chars);
         editor_update_syntax(syntax, row, is_comment_open);
         // New line
+        cy += 1;
         let new_row = ERow::from(syntax, &chars, row.is_comment_open());
-        editor_config.rows.insert(cy + 1, new_row);
+        editor_config.rows.insert(cy, new_row);
     }
+    editor_propagate_update_syntax(editor_config.syntax, &mut editor_config.rows, cy);
 }
 
 /// if (E.cy == E.numrows) return;
@@ -1458,7 +1489,7 @@ fn editor_delete_char(editor_config: &mut EditorConfig) {
 
     let (cursor_x, cursor_y) = editor_config.cursor;
     let cx = cursor_x as usize;
-    let cy = cursor_y as usize;
+    let mut cy = cursor_y as usize;
     let is_comment_open = is_row_comment_open(&editor_config.rows, cy);
     if editor_config.rows.len() == cy || (0, 0) == editor_config.cursor {
         return;
@@ -1472,9 +1503,10 @@ fn editor_delete_char(editor_config: &mut EditorConfig) {
             // default "move one position right"
             editor_config.cursor = (cursor_x + 1, cursor_y - 1);
             // Merge previous and current lines
+            cy -= 1;
             editor_row_append_string(
                 editor_config.syntax,
-                &mut editor_config.rows[cy - 1],
+                &mut editor_config.rows[cy],
                 &current_row.chars,
             );
         }
@@ -1482,6 +1514,7 @@ fn editor_delete_char(editor_config: &mut EditorConfig) {
         editor_row_delete_char(editor_config.syntax, is_comment_open, row, cx);
     }
     editor_config.dirty = true;
+    editor_propagate_update_syntax(editor_config.syntax, &mut editor_config.rows, cy);
 }
 
 /*** file i/o ***/
