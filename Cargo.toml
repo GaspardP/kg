@@ -4,5 +4,5 @@ version = "0.1.0"
 authors = ["GaspardP"]
 
 [dependencies]
-nix = "0.18.0"
+nix = "0.24.1"
 termios = "0.3.2"
