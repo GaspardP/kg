@@ -145,13 +145,6 @@ enum Highlight {
     String,
 }
 
-/// struct editorSyntax {
-///   char *filetype;
-///   char **filematch;
-///   char **keywords;
-///   char *singleline_comment_start;
-///   int flags;
-/// };
 struct EditorSyntax {
     /// Name of the type displayed in the  status bar
     file_type: &'static str,
@@ -166,14 +159,6 @@ struct EditorSyntax {
     multi_line_comment_markers: Option<(&'static str, &'static str)>,
 }
 
-/// typedef struct erow {
-///   int size;
-///   int rsize;
-///   char *chars;
-///   char *render;
-///   unsigned char *hl;
-///   int hl_open_comment;
-/// } erow;
 struct ERow {
     chars: String,
     render: String,
@@ -250,15 +235,9 @@ impl Drop for EditorConfig {
 
 /*** filetypes ***/
 
-/// char *C_HL_extensions[] = { ".c", ".h", ".cpp", NULL };
 const C_HL_EXT: [&str; 3] = ["c", "h", "cpp"];
 const RS_HL_EXT: [&str; 1] = ["rs"];
 
-/// char *C_HL_keywords[] = {
-///   "switch", "if", "else", ...
-///   "int|", "long|"
-///   NULL
-/// };
 const C_HL_KW_RESERVED: [&str; 15] = [
     "break", "case", "class", "continue", "else", "enum", "for", "if", "return", "static",
     "struct", "switch", "typedef", "union", "while",
@@ -278,15 +257,6 @@ const RS_HL_KW_TYPE: [&str; 17] = [
     "u32", "u64", "u8", "usize",
 ];
 
-/// struct editorSyntax HLDB[] = {
-///   {
-///     "c",
-///     C_HL_extensions,
-///     C_HL_keywords,
-///     "//", "/*", "*/",
-///     HL_HIGHLIGHT_NUMBERS
-///   },
-/// };
 const HLDB: &[EditorSyntax] = &[
     EditorSyntax {
         file_type: "C",
@@ -339,17 +309,6 @@ const HLDB: &[EditorSyntax] = &[
 /// `tcsetattr`. `TCSAFLUSH` specifies that the changes will be applied once all
 /// pending output have been written to the terminal and discards any unread
 /// inputs.
-/// ---
-/// if (tcgetattr(STDIN_FILENO, &E.orig_termios) == -1) die("tcgetattr");
-/// struct termios raw = E.orig_termios;
-/// tcgetattr(STDIN_FILENO, &raw);
-/// raw.c_cflag |= (CS8);
-/// raw.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
-/// raw.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG);
-/// raw.c_oflag &= ~(OPOST);
-/// raw.c_cc[VMIN] = 0;
-/// raw.c_cc[VTIME] = 1;
-/// tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
 fn enable_raw_mode(fd: RawFd, mut termios: Termios) -> Result<(), std::io::Error> {
     tcgetattr(fd, &mut termios)?;
     termios.c_cflag |= CS8;
@@ -366,58 +325,10 @@ fn enable_raw_mode(fd: RawFd, mut termios: Termios) -> Result<(), std::io::Error
 }
 
 /// Sets the ternimal attributes back to the original
-/// ---
-/// if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &E.orig_termios) == -1)
-///   die("tcsetattr");
 fn disable_raw_mode(fd: RawFd, original: Termios) -> Result<(), std::io::Error> {
     tcsetattr(fd, TCSAFLUSH, &original)
 }
 
-/// int nread;
-/// char c;
-/// while ((nread = read(STDIN_FILENO, &c, 1)) != 1) {
-///   if (nread == -1 && errno != EAGAIN) die("read");
-/// }
-/// if (c == '\x1b') {
-///   char seq[3];
-///   if (read(STDIN_FILENO, &seq[0], 1) != 1) return '\x1b';
-///   if (read(STDIN_FILENO, &seq[1], 1) != 1) return '\x1b';
-///
-///   if (seq[0] == '[') {
-///     if (seq[1] >= '0' && seq[1] <= '9') {
-///       if (read(STDIN_FILENO, &seq[2], 1) != 1) return '\x1b';
-///       if (seq[2] == '~') {
-///         switch (seq[1]) {
-///           case '1': return HOME_KEY;
-///           case '3': return DEL_KEY;
-///           case '4': return END_KEY;
-///           case '5': return PAGE_UP;
-///           case '6': return PAGE_DOWN;
-///           case '7': return HOME_KEY;
-///           case '8': return END_KEY;
-///         }
-///       }
-///     } else {
-///       switch (seq[1]) {
-///         case 'A': return ARROW_UP;
-///         case 'B': return ARROW_DOWN;
-///         case 'C': return ARROW_RIGHT;
-///         case 'D': return ARROW_LEFT;
-///         case 'H': return HOME_KEY;
-///         case 'F': return END_KEY;
-///       }
-///     }
-///   } else if (seq[0] == 'O') {
-///     switch (seq[1]) {
-///       case 'H': return HOME_KEY;
-///       case 'F': return END_KEY;
-///     }
-///   }
-///
-///   return '\x1b';
-/// } else {
-///   return c;
-/// }
 fn editor_read_key(editor_config: &EditorConfig) -> Result<Key, Error> {
     let stdin = editor_config.stdin;
     let mut buffer = [0u8; 1];
@@ -474,19 +385,6 @@ fn editor_read_key(editor_config: &EditorConfig) -> Result<Key, Error> {
 /// Uses DSR (Device Status Report) to get the cursor position. The sequence
 /// printed will be something like `^[[71;140R` which will be represented as
 /// `[27, 91, 55, 49, 59, 49, 52, 48, 82]` in a u8 array.
-///---
-/// char buf[32];
-/// unsigned int i = 0;
-/// if (write(STDOUT_FILENO, "\x1b[6n", 4) != 4) return -1;
-/// while (i < sizeof(buf) - 1) {
-///   if (read(STDIN_FILENO, &buf[i], 1) != 1) break;
-///   if (buf[i] == 'R') break;
-///   i++;
-/// }
-/// buf[i] = '\0';
-/// if (buf[0] != '\x1b' || buf[1] != '[') return -1;
-/// if (sscanf(&buf[2], "%d;%d", rows, cols) != 2) return -1;
-/// return 0;
 fn get_cursor_position(stdin: RawFd, stdout: RawFd) -> Result<(u16, u16), Error> {
     let dsr_active_position = b"\x1b[6n";
     if 4 != write(stdout, dsr_active_position)? {
@@ -540,16 +438,6 @@ fn get_cursor_position(stdin: RawFd, stdout: RawFd) -> Result<(u16, u16), Error>
 /// Tries to get the Terminal size through the `ioctl` TIOCGWINSZ. If this
 /// fails, tries to fetch the size by moving the cursor to arbitrary big values
 /// and reading the cursor position.
-///---
-/// struct winsize ws;
-/// if (1 || ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0) {
-///   if (write(STDOUT_FILENO, "\x1b[999C\x1b[999B", 12) != 12) return -1;
-///   editorReadKey();
-/// } else {
-///   *cols = ws.ws_col;
-///   *rows = ws.ws_row;
-///   return 0;
-/// }
 fn get_window_size(stdin: RawFd, stdout: RawFd) -> Result<(u16, u16), Error> {
     use nix::libc::{ioctl, winsize, TIOCGWINSZ};
 
@@ -584,7 +472,6 @@ trait IsSeparator {
     fn is_separator(&self) -> bool;
 }
 
-/// return isspace(c) || c == '\0' || strchr(",.()+-/*=~%<>[];", c) != NULL;
 impl IsSeparator for char {
     fn is_separator(&self) -> bool {
         " 	,.()+-/*=~%<>[];".find(*self).is_some()
@@ -797,75 +684,6 @@ fn highlight_default(chars: &[char], mut i: usize) -> usize {
     i
 }
 
-/// row->hl = realloc(row->hl, row->rsize);
-/// memset(row->hl, HL_NORMAL, row->rsize);
-/// if (E.syntax == NULL) return;
-/// char **keywords = E.syntax->keywords;
-/// char *scs = E.syntax->singleline_comment_start;
-/// int scs_len = scs ? strlen(scs) : 0;
-/// int prev_sep = 1;
-/// int in_string = 0;
-/// int i = 0;
-/// while (i < row->rsize) {
-///   char c = row->render[i];
-///   unsigned char prev_hl = (i > 0) ? row->hl[i - 1] : HL_NORMAL;
-///   if (scs_len && !in_string) {
-///     if (!strncmp(&row->render[i], scs, scs_len)) {
-///       memset(&row->hl[i], HL_COMMENT, row->rsize - i);
-///       break;
-///     }
-///   }
-///   if (E.syntax->flags & HL_HIGHLIGHT_STRINGS) {
-///     if (in_string) {
-///       row->hl[i] = HL_STRING;
-///       if (c == '\\' && i + 1 < row->rsize) {
-///         row->hl[i + 1] = HL_STRING;
-///         i += 2;
-///         continue;
-///       }
-///       if (c == in_string) in_string = 0;
-///       i++;
-///       prev_sep = 1;
-///       continue;
-///     } else {
-///       if (c == '"' || c == '\'') {
-///         in_string = c;
-///         row->hl[i] = HL_STRING;
-///         i++;
-///         continue;
-///       }
-///     }
-///   }
-///   if (E.syntax->flags & HL_HIGHLIGHT_NUMBERS) {
-///     if ((isdigit(c) && (prev_sep || prev_hl == HL_NUMBER)) ||
-///         (c == '.' && prev_hl == HL_NUMBER)) {
-///       row->hl[i] = HL_NUMBER;
-///       i++;
-///       prev_sep = 0;
-///       continue;
-///     }
-///   }
-///   if (prev_sep) {
-///     int j;
-///     for (j = 0; keywords[j]; j++) {
-///       int klen = strlen(keywords[j]);
-///       int kw2 = keywords[j][klen - 1] == '|';
-///       if (kw2) klen--;
-///       if (!strncmp(&row->render[i], keywords[j], klen) &&
-///           is_separator(row->render[i + klen])) {
-///         memset(&row->hl[i], kw2 ? HL_KEYWORD2 : HL_KEYWORD1, klen);
-///         i += klen;
-///         break;
-///       }
-///     }
-///     if (keywords[j] != NULL) {
-///       prev_sep = 0;
-///       continue;
-///     }
-///   }
-///   prev_sep = is_separator(c);
-///   i++;
-/// }
 fn editor_update_syntax(syntax_opt: Option<&EditorSyntax>, row: &mut ERow, is_comment_open: bool) {
     let render = &row.render;
     row.hl.clear();
@@ -1039,15 +857,6 @@ fn editor_propagate_update_syntax(syntax_opt: Option<&EditorSyntax>, rows: &mut 
     }
 }
 
-/// switch (hl) {
-///   case HL_COMMENT: return 36;
-///   case HL_KEYWORD1: return 33;
-///   case HL_KEYWORD2: return 32;
-///   case HL_NUMBER: return 31;
-///   case HL_MATCH: return 34;
-///   case HL_STRING: return 35;
-///   default: return 37;
-/// }
 fn editor_syntax_to_color(h: Highlight) -> &'static [u8] {
     use colors::{
         BLUE_FOREGROUND, CYAN_FOREGROUND, DEFAULT_FOREGROUND, GREEN_FOREGROUND, MAGENTA_FOREGROUND,
@@ -1068,26 +877,6 @@ fn editor_syntax_to_color(h: Highlight) -> &'static [u8] {
     }
 }
 
-/// E.syntax = NULL;
-/// if (E.filename == NULL) return;
-/// char *ext = strrchr(E.filename, '.');
-/// for (unsigned int j = 0; j < HLDB_ENTRIES; j++) {
-///   struct editorSyntax *s = &HLDB[j];
-///   unsigned int i = 0;
-///   while (s->filematch[i]) {
-///     int is_ext = (s->filematch[i][0] == '.');
-///     if ((is_ext && ext && !strcmp(ext, s->filematch[i])) ||
-///         (!is_ext && strstr(E.filename, s->filematch[i]))) {
-///       E.syntax = s;
-///       int filerow;
-///       for (filerow = 0; filerow < E.numrows; filerow++) {
-///         editorUpdateSyntax(&E.row[filerow]);
-///       }
-///       return;
-///     }
-///     i++;
-///   }
-/// }
 fn editor_select_syntax_highlight(extension: &str) -> Option<&'static EditorSyntax> {
     for syntax in HLDB {
         for file_ext in syntax.file_match {
@@ -1104,17 +893,6 @@ fn editor_select_syntax_highlight(extension: &str) -> Option<&'static EditorSynt
 /// Converts a `chars` index into a `render` index. For each tab characters
 /// located left of the cursor, we add to `cx` the number of columns needed to
 /// reach the next tab stop.
-/// ---
-/// int editorRowCxToRx(erow *row, int cx) {
-///   int rx = 0;
-///   int j;
-///   for (j = 0; j < cx; j++) {
-///     if (row->chars[j] == '\t')
-///       rx += (KILO_TAB_STOP - 1) - (rx % KILO_TAB_STOP);
-///     rx++;
-///   }
-///   return rx;
-/// }
 fn editor_row_cx_to_rx(chars: &str, cx: u16) -> u16 {
     let mut rx: u16 = 0;
     for (i, c) in chars.char_indices() {
@@ -1129,15 +907,6 @@ fn editor_row_cx_to_rx(chars: &str, cx: u16) -> u16 {
     rx
 }
 
-/// int cur_rx = 0;
-/// int cx;
-/// for (cx = 0; cx < row->size; cx++) {
-///   if (row->chars[cx] == '\t')
-///     cur_rx += (KILO_TAB_STOP - 1) - (cur_rx % KILO_TAB_STOP);
-///   cur_rx++;
-///   if (cur_rx > rx) return cx;
-/// }
-/// return cx;
 fn editor_row_rx_to_cx(chars: &str, rx: u16) -> u16 {
     use std::convert::TryFrom;
 
@@ -1237,26 +1006,6 @@ mod tests_cx_rx_conversions {
 /// Replaces tabs with enough spaces to reach the next tab stop. This way the
 /// tab's display size can be controlled by the editor instead of using on the
 /// size set by the terminal.
-///---
-/// void editorUpdateRow(erow *row) {
-///   int tabs = 0;
-///   int j;
-///   for (j = 0; j < row->size; j++)
-///     if (row->chars[j] == '\t') tabs++;
-///   free(row->render);
-///   row->render = malloc(row->size + tabs*(KILO_TAB_STOP - 1) + 1);
-///   int idx = 0;
-///   for (j = 0; j < row->size; j++) {
-///     if (row->chars[j] == '\t') {
-///       row->render[idx++] = ' ';
-///       while (idx % KILO_TAB_STOP != 0) row->render[idx++] = ' ';
-///     } else {
-///       row->render[idx++] = row->chars[j];
-///     }
-///   }
-///   row->render[idx] = '\0';
-///   row->rsize = idx;
-/// }
 fn editor_update_row(tab_stop: u16, line: &str) -> String {
     let tab_stop = tab_stop as usize;
     let mut s = String::new();
@@ -1335,11 +1084,6 @@ mod tests_update_row {
     }
 }
 
-/// if (at < 0 || at >= E.numrows) return;
-/// editorFreeRow(&E.row[at]);
-/// memmove(&E.row[at], &E.row[at + 1], sizeof(erow) * (E.numrows - at - 1));
-/// E.numrows--;
-/// E.dirty++;
 fn editor_delete_row(editor_config: &mut EditorConfig, at: usize) -> Option<ERow> {
     if editor_config.rows.len() < at {
         None
@@ -1349,12 +1093,6 @@ fn editor_delete_row(editor_config: &mut EditorConfig, at: usize) -> Option<ERow
     }
 }
 
-/// if (at < 0 || at > row->size) at = row->size;
-/// row->chars = realloc(row->chars, row->size + 2);
-/// memmove(&row->chars[at + 1], &row->chars[at], row->size - at + 1);
-/// row->size++;
-/// row->chars[at] = c;
-/// editorUpdateRow(row);
 fn editor_row_insert_char(
     syntax: Option<&EditorSyntax>,
     is_comment_open: bool,
@@ -1371,12 +1109,6 @@ fn editor_row_insert_char(
     editor_update_syntax(syntax, row, is_comment_open);
 }
 
-/// row->chars = realloc(row->chars, row->size + len + 1);
-/// memcpy(&row->chars[row->size], s, len);
-/// row->size += len;
-/// row->chars[row->size] = '\0';
-/// editorUpdateRow(row);
-/// E.dirty++;
 fn editor_row_append_string(syntax: Option<&EditorSyntax>, row: &mut ERow, s: &str) {
     row.chars.push_str(s);
     row.render = editor_update_row(TAB_STOP, &row.chars);
@@ -1387,12 +1119,6 @@ fn editor_row_append_string(syntax: Option<&EditorSyntax>, row: &mut ERow, s: &s
 }
 
 /// Removes the character on the left of the cursor.
-/// ---
-/// if (at < 0 || at >= row->size) return;
-/// memmove(&row->chars[at], &row->chars[at + 1], row->size - at);
-/// row->size--;
-/// editorUpdateRow(row);
-/// E.dirty++;
 fn editor_row_delete_char(
     syntax: Option<&EditorSyntax>,
     is_comment_open: bool,
@@ -1415,12 +1141,6 @@ fn editor_row_delete_char(
 /// the cursor. In this version `editor_refresh_screen` does not mutate any
 /// state so the cursor needs to be moved with `editor_move_cursor` explicitly
 /// instead. This is done by the InsertChar event instead.
-/// ---
-/// if (E.cy == E.numrows) {
-///   editorInsertRow(E.numrows, "", 0);
-/// }
-/// editorRowInsertChar(&E.row[E.cy], E.cx, c);
-/// E.cx++;
 fn editor_insert_char(editor_config: &mut EditorConfig, c: char) {
     let (cursor_x, cursor_y) = editor_config.cursor;
     let cx = cursor_x as usize;
@@ -1438,18 +1158,6 @@ fn editor_insert_char(editor_config: &mut EditorConfig, c: char) {
     editor_propagate_update_syntax(editor_config.syntax, &mut editor_config.rows, cy);
 }
 
-/// if (E.cx == 0) {
-///   editorInsertRow(E.cy, "", 0);
-/// } else {
-///   erow *row = &E.row[E.cy];
-///   editorInsertRow(E.cy + 1, &row->chars[E.cx], row->size - E.cx);
-///   row = &E.row[E.cy];
-///   row->size = E.cx;
-///   row->chars[row->size] = '\0';
-///   editorUpdateRow(row);
-/// }
-/// E.cy++;
-/// E.cx = 0;
 fn editor_insert_newline(editor_config: &mut EditorConfig) {
     let syntax = editor_config.syntax;
     let (cursor_x, cursor_y) = editor_config.cursor;
@@ -1472,18 +1180,6 @@ fn editor_insert_newline(editor_config: &mut EditorConfig) {
     editor_propagate_update_syntax(editor_config.syntax, &mut editor_config.rows, cy);
 }
 
-/// if (E.cy == E.numrows) return;
-/// if (E.cx == 0 && E.cy == 0) return;
-/// erow *row = &E.row[E.cy];
-/// if (E.cx > 0) {
-///   editorRowDelChar(row, E.cx - 1);
-///   E.cx--;
-/// } else {
-///   E.cx = E.row[E.cy - 1].size;
-///   editorRowAppendString(&E.row[E.cy - 1], row->chars, row->size);
-///   editorDelRow(E.cy);
-///   E.cy--;
-/// }
 fn editor_delete_char(editor_config: &mut EditorConfig) {
     use std::convert::TryFrom;
 
@@ -1519,20 +1215,6 @@ fn editor_delete_char(editor_config: &mut EditorConfig) {
 
 /*** file i/o ***/
 
-/// int totlen = 0;
-/// int j;
-/// for (j = 0; j < E.numrows; j++)
-///   totlen += E.row[j].size + 1;
-/// *buflen = totlen;
-/// char *buf = malloc(totlen);
-/// char *p = buf;
-/// for (j = 0; j < E.numrows; j++) {
-///   memcpy(p, E.row[j].chars, E.row[j].size);
-///   p += E.row[j].size;
-///   *p = '\n';
-///   p++;
-/// }
-/// return buf;
 fn editor_rows_to_string(editor_config: &EditorConfig) -> String {
     let mut text = editor_config
         .rows
@@ -1548,22 +1230,6 @@ fn editor_rows_to_string(editor_config: &EditorConfig) -> String {
 /// `BufRead::lines()` splits the lines on carriage returns and removes them
 /// from the result. We don't need to read the input one char at the time and
 /// can just save the String in the rows.
-/// ---
-/// free(E.filename);
-/// E.filename = strdup(filename);
-/// FILE *fp = fopen(filename, "r");
-/// if (!fp) die("fopen");
-/// char *line = NULL;
-/// size_t linecap = 0;
-/// ssize_t linelen;
-/// while ((linelen = getline(&line, &linecap, fp)) != -1) {
-///   while (linelen > 0 && (line[linelen - 1] == '\n' ||
-///                          line[linelen - 1] == '\r'))
-///     linelen--;
-///   editorAppendRow(line, linelen);
-/// }
-/// free(line);
-/// fclose(fp);
 fn editor_open(editor_config: &mut EditorConfig, filename: &str) -> Result<(), Error> {
     use std::fs::File;
     use std::io::{BufRead, BufReader};
@@ -1596,31 +1262,6 @@ fn editor_open(editor_config: &mut EditorConfig, filename: &str) -> Result<(), E
 }
 
 /// Returns the number of bytes written or an Error
-/// ---
-/// if (E.filename == NULL) {
-///   E.filename = editorPrompt("Save as: %s (ESC to cancel)");
-///   if (E.filename == NULL) {
-///     editorSetStatusMessage("Save aborted");
-///     return;
-///   }
-///   editorSelectSyntaxHighlight();
-/// }
-/// int len;
-/// char *buf = editorRowsToString(&len);
-/// int fd = open(E.filename, O_RDWR | O_CREAT, 0644);
-/// if (fd != -1) {
-///   if (ftruncate(fd, len) != -1) {
-///     if (write(fd, buf, len) == len) {
-///       close(fd);
-///       free(buf);
-///       editorSetStatusMessage("%d bytes written to disk", len);
-///       return;
-///     }
-///   }
-///   close(fd);
-/// }
-/// free(buf);
-/// editorSetStatusMessage("Can't save! I/O error: %s", strerror(errno));
 fn editor_save(editor_config: &mut EditorConfig) -> Result<(), Error> {
     use std::fs::File;
     use std::io::Write;
@@ -1654,49 +1295,6 @@ fn editor_save(editor_config: &mut EditorConfig) -> Result<(), Error> {
 /// "Dumb" implementation that will iterate over all the lines of the files for
 /// each new call. Iterates over all the matches found before selecting the next
 /// cursor position to colour all the items matching the query.
-/// ---
-/// static int last_match = -1;
-/// static int direction = 1;
-/// static int saved_hl_line;
-/// static char *saved_hl = NULL;
-/// if (saved_hl) {
-///   memcpy(E.row[saved_hl_line].hl, saved_hl, E.row[saved_hl_line].rsize);
-///   free(saved_hl);
-///   saved_hl = NULL;
-/// }
-/// if (key == '\r' || key == '\x1b') {
-///   last_match = -1;
-///   direction = 1;
-///   return;
-/// } else if (key == ARROW_RIGHT || key == ARROW_DOWN) {
-///   direction = 1;
-/// } else if (key == ARROW_LEFT || key == ARROW_UP) {
-///   direction = -1;
-/// } else {
-///   last_match = -1;
-///   direction = 1;
-/// }
-/// if (last_match == -1) direction = 1;
-/// int current = last_match;
-/// int i;
-/// for (i = 0; i < E.numrows; i++) {
-///   current += direction;
-///   if (current == -1) current = E.numrows - 1;
-///   else if (current == E.numrows) current = 0;
-///   erow *row = &E.row[current];
-///   char *match = strstr(row->render, query);
-///   if (match) {
-///     last_match = current;
-///     E.cy = current;
-///     E.cx = editorRowRxToCx(row, match - row->render);
-///     E.rowoff = E.numrows;
-///     saved_hl_line = current;
-///     saved_hl = malloc(row->rsize);
-///     memcpy(saved_hl, row->hl, row->rsize);
-///     memset(&row->hl[match - row->render], HL_MATCH, strlen(query));
-///     break;
-///   }
-/// }
 fn editor_find_callback(editor_config: &mut EditorConfig, query: &str, key: &Key) {
     use std::convert::TryFrom;
 
@@ -1748,20 +1346,6 @@ fn editor_find_callback(editor_config: &mut EditorConfig, query: &str, key: &Key
     editor_scroll(editor_config);
 }
 
-/// int saved_cx = E.cx;
-/// int saved_cy = E.cy;
-/// int saved_coloff = E.coloff;
-/// int saved_rowoff = E.rowoff;
-/// char *query = editorPrompt("Search: %s (Use ESC/Arrows/Enter)",
-///                            editorFindCallback);
-/// if (query) {
-///   free(query);
-/// } else {
-///   E.cx = saved_cx;
-///   E.cy = saved_cy;
-///   E.coloff = saved_coloff;
-///   E.rowoff = saved_rowoff;
-/// }
 fn editor_find(editor_config: &mut EditorConfig) -> Result<(), Error> {
     let cursor = editor_config.cursor;
     let hls: Vec<Vec<Highlight>> = editor_config
@@ -1794,22 +1378,7 @@ fn editor_find(editor_config: &mut EditorConfig) -> Result<(), Error> {
 }
 
 /*** output ***/
-/// E.rx = 0;
-/// if (E.cy < E.numrows) {
-///   E.rx = editorRowCxToRx(&E.row[E.cy], E.cx);
-/// }
-/// if (E.cy < E.rowoff) {
-///   E.rowoff = E.cy;
-/// }
-/// if (E.cy >= E.rowoff + E.screenrows) {
-///   E.rowoff = E.cy - E.screenrows + 1;
-/// }
-/// if (E.rx < E.coloff) {
-///   E.coloff = E.rx;
-/// }
-/// if (E.rx >= E.coloff + E.screencols) {
-///   E.coloff = E.rx - E.screencols + 1;
-/// }
+
 fn editor_scroll(editor_config: &mut EditorConfig) {
     use std::cmp::max;
 
@@ -1844,67 +1413,6 @@ fn editor_scroll(editor_config: &mut EditorConfig) {
 }
 
 /// Draws a vertical column of `~` when the screen is empty
-/// ---
-/// int y;
-/// for (y = 0; y < E.screenrows; y++) {
-///   int filerow = y + E.rowoff;
-///   if (filerow >= E.numrows) {
-///     if (E.numrows == 0 && y == E.screenrows / 3) {
-///       char welcome[80];
-///       int welcomelen = snprintf(welcome, sizeof(welcome),
-///         "Kilo editor -- version %s", KILO_VERSION);
-///       if (welcomelen > E.screencols) welcomelen = E.screencols;
-///       int padding = (E.screencols - welcomelen) / 2;
-///       if (padding) {
-///         abAppend(ab, "~", 1);
-///         padding--;
-///       }
-///       while (padding--) abAppend(ab, " ", 1);
-///       abAppend(ab, welcome, welcomelen);
-///     } else {
-///       abAppend(ab, "~", 1);
-///     }
-///   } else {
-///     int len = E.row[filerow].rsize - E.coloff;
-///     if (len < 0) len = 0;
-///     if (len > E.screencols) len = E.screencols;
-///     char *c = &E.row[filerow].render[E.coloff];
-///     unsigned char *hl = &E.row[filerow].hl[E.coloff];
-///     int current_color = -1;
-///     int j;
-///     for (j = 0; j < len; j++) {
-///       if (iscntrl(c[j])) {
-///         char sym = (c[j] <= 26) ? '@' + c[j] : '?';
-///         abAppend(ab, "\x1b[7m", 4);
-///         abAppend(ab, &sym, 1);
-///         abAppend(ab, "\x1b[m", 3);
-///         if (current_color != -1) {
-///           char buf[16];
-///           int clen = snprintf(buf, sizeof(buf), "\x1b[%dm", current_color);
-///           abAppend(ab, buf, clen);
-///         }
-///       } else if (hl[j] == HL_NORMAL) {
-///         if (current_color != -1) {
-///           abAppend(ab, "\x1b[39m", 5);
-///           current_color = -1;
-///         }
-///         abAppend(ab, &c[j], 1);
-///       } else {
-///         int color = editorSyntaxToColor(hl[j]);
-///         if (color != current_color) {
-///           current_color = color;
-///           char buf[16];
-///           int clen = snprintf(buf, sizeof(buf), "\x1b[%dm", color);
-///           abAppend(ab, buf, clen);
-///         }
-///         abAppend(ab, &c[j], 1);
-///       }
-///     }
-///     abAppend(ab, "\x1b[39m", 5);
-///   }
-///   abAppend(ab, "\x1b[K", 3);
-///   abAppend(ab, "\r\n", 2);
-/// }
 fn editor_draw_rows(editor_config: &EditorConfig, ab: &mut Vec<u8>) {
     use std::cmp::Ordering;
     let col_offset = editor_config.col_offset as usize;
@@ -1965,26 +1473,6 @@ fn editor_draw_rows(editor_config: &EditorConfig, ab: &mut Vec<u8>) {
     }
 }
 
-/// abAppend(ab, "\x1b[7m", 4);
-/// char status[80], rstatus[80];
-/// int len = snprintf(status, sizeof(status), "%.20s - %d lines %s",
-///   E.filename ? E.filename : "[No Name]", E.numrows,
-///   E.dirty ? "(modified)" : "");
-/// int rlen = snprintf(rstatus, sizeof(rstatus), "%s | %d/%d",
-///   E.syntax ? E.syntax->filetype : "no ft", E.cy + 1, E.numrows);
-/// if (len > E.screencols) len = E.screencols;
-/// abAppend(ab, status, len);
-/// while (len < E.screencols) {
-///   if (E.screencols - len == rlen) {
-///     abAppend(ab, rstatus, rlen);
-///     break;
-///   } else {
-///     abAppend(ab, " ", 1);
-///     len++;
-///   }
-/// }
-/// abAppend(ab, "\x1b[m", 3);
-/// abAppend(ab, "\r\n", 2);
 fn editor_draw_status_bar(editor_config: &EditorConfig, ab: &mut Vec<u8>) {
     let width = editor_config.screen_cols as usize;
     let (_, cy) = editor_config.cursor;
@@ -2026,11 +1514,6 @@ fn editor_draw_status_bar(editor_config: &EditorConfig, ab: &mut Vec<u8>) {
     ab.extend(b"\r\n");
 }
 
-/// abAppend(ab, "\x1b[K", 3);
-/// int msglen = strlen(E.statusmsg);
-/// if (msglen > E.screencols) msglen = E.screencols;
-/// if (msglen && time(NULL) - E.statusmsg_time < 5)
-/// abAppend(ab, E.statusmsg, msglen);
 fn editor_draw_message_bar(editor_config: &EditorConfig, ab: &mut Vec<u8>) {
     ab.extend(CLEAR_LINE);
     if let Some(StatusMessage { message, .. }) = &editor_config.status_message {
@@ -2042,20 +1525,6 @@ fn editor_draw_message_bar(editor_config: &EditorConfig, ab: &mut Vec<u8>) {
 /// starts the escape sequence and the sequence `[2J` clears the whole screen.
 ///
 /// [1] https://vt100.net/docs/vt100-ug/chapter3.html#ED
-/// ---
-/// editorScroll();
-/// struct abuf ab = ABUF_INIT;
-/// abAppend(&ab, "\x1b[?25l", 6);
-/// abAppend(&ab, "\x1b[H", 3);
-/// editorDrawRows(&ab);
-/// editorDrawStatusBar(&ab);
-/// char buf[32];
-/// snprintf(buf, sizeof(buf), "\x1b[%d;%dH", (E.cy - E.rowoff) + 1,
-///                                           (E.cx - E.coloff) + 1);
-/// abAppend(&ab, buf, strlen(buf));
-/// abAppend(&ab, "\x1b[?25h", 6);
-/// write(STDOUT_FILENO, ab.b, ab.len);
-/// abFree(&ab);
 fn editor_refresh_screen(editor_config: &EditorConfig) -> Result<(), Error> {
     let col_offset = editor_config.col_offset;
     let row_offset = editor_config.row_offset;
@@ -2085,12 +1554,6 @@ fn editor_refresh_screen(editor_config: &EditorConfig) -> Result<(), Error> {
 
 /// The original version uses a variadic function. This usecase is left out
 /// for now.
-/// ---
-/// va_list ap;
-/// va_start(ap, fmt);
-/// vsnprintf(E.statusmsg, sizeof(E.statusmsg), fmt, ap);
-/// va_end(ap);
-/// E.statusmsg_time = time(NULL);
 fn editor_set_status_message(editor_config: &mut EditorConfig, fmt: &str) {
     editor_config.status_message = Some(StatusMessage {
         message: fmt.to_string(),
@@ -2108,34 +1571,6 @@ fn editor_clear_status_message_after_timeout(editor_config: &mut EditorConfig) {
 
 /*** input ***/
 
-/// size_t bufsize = 128;
-/// char *buf = malloc(bufsize);
-/// size_t buflen = 0;
-/// buf[0] = '\0';
-/// while (1) {
-///   editorSetStatusMessage(prompt, buf);
-///   editorRefreshScreen();
-///   int c = editorReadKey();
-///   if (c == DEL_KEY || c == CTRL_KEY('h') || c == BACKSPACE) {
-///     if (buflen != 0) buf[--buflen] = '\0';
-///   } else if (c == '\x1b') {
-///     editorSetStatusMessage("");
-///     free(buf);
-///     return NULL;
-///   } else if (c == '\r') {
-///     if (buflen != 0) {
-///       editorSetStatusMessage("");
-///       return buf;
-///     }
-///   } else if (!iscntrl(c) && c < 128) {
-///     if (buflen == bufsize - 1) {
-///       bufsize *= 2;
-///       buf = realloc(buf, bufsize);
-///     }
-///     buf[buflen++] = c;
-///     buf[buflen] = '\0';
-///   }
-/// }
 fn editor_prompt<Callback>(
     editor_config: &mut EditorConfig,
     prompt: &str,
@@ -2175,41 +1610,6 @@ where
 /// free of mutation. Using "saturating" addition and substraction to have
 /// controlled overflow. Thanks to that the min check can be skipped for
 /// substractions.
-/// ---
-/// erow *row = (E.cy >= E.numrows) ? NULL : &E.row[E.cy];
-/// switch (key) {
-///   case ARROW_LEFT:
-///     if (E.cx != 0) {
-///       E.cx--;
-///     } else if (E.cy > 0) {
-///       E.cy--;
-///       E.cx = E.row[E.cy].size;
-///     }
-///     break;
-///   case ARROW_RIGHT:
-///     if (row && E.cx < row->size) {
-///       E.cx++;
-///     } else if (row && E.cx == row->size) {
-///       E.cy++;
-///       E.cx = 0;
-///     }
-///     break;
-///   case ARROW_UP:
-///     if (E.cy != 0) {
-///       E.cy--;
-///     }
-///     break;
-///   case ARROW_DOWN:
-///     if (E.cy < E.numrows) {
-///       E.cy++;
-///     }
-///     break;
-/// }
-/// row = (E.cy >= E.numrows) ? NULL : &E.row[E.cy];
-/// int rowlen = row ? row->size : 0;
-/// if (E.cx > rowlen) {
-///   E.cx = rowlen;
-/// }
 fn editor_move_cursor(editor_config: &mut EditorConfig, direction: &Direction, times: u16) {
     use std::convert::TryFrom;
     use Direction::{Down, Left, Right, Up};
@@ -2270,62 +1670,6 @@ fn editor_move_cursor(editor_config: &mut EditorConfig, direction: &Direction, t
     editor_scroll(editor_config);
 }
 
-/// int c = editorReadKey();
-/// switch (c) {
-///   case '\r':
-///     editorInsertNewline();
-///     break;
-///   case CTRL_KEY('q'):
-///     write(STDOUT_FILENO, "\x1b[2J", 4);
-///     write(STDOUT_FILENO, "\x1b[H", 3);
-///     exit(0);
-///     break;
-///   case CTRL_KEY('s'):
-///     editorSave();
-///     break;
-///   case HOME_KEY:
-///     E.cx = 0;
-///     break;
-///   case END_KEY:
-///     if (E.cy < E.numrows)
-///       E.cx = E.row[E.cy].size;
-///     break;
-///   case CTRL_KEY('f'):
-///     editorFind();
-///     break;
-///   case BACKSPACE:
-///   case CTRL_KEY('h'):
-///   case DEL_KEY:
-///     if (c == DEL_KEY) editorMoveCursor(ARROW_RIGHT);
-///     editorDelChar();
-///     break;
-///   case PAGE_UP:
-///   case PAGE_DOWN:
-///     {
-///       if (c == PAGE_UP) {
-///         E.cy = E.rowoff;
-///       } else if (c == PAGE_DOWN) {
-///         E.cy = E.rowoff + E.screenrows - 1;
-///         if (E.cy > E.numrows) E.cy = E.numrows;
-///       }
-///       int times = E.screenrows;
-///       while (times--)
-///         editorMoveCursor(c == PAGE_UP ? ARROW_UP : ARROW_DOWN);
-///     }
-///     break;
-///   case ARROW_UP:
-///   case ARROW_DOWN:
-///   case ARROW_LEFT:
-///   case ARROW_RIGHT:
-///     editorMoveCursor(c);
-///     break;
-///   case CTRL_KEY('l'):
-///   case '\x1b':
-///     break;
-///   default:
-///     editorInsertChar(c);
-///     break;
-/// }
 fn editor_process_keypress(editor_config: &EditorConfig) -> Result<Event, Error> {
     use std::convert::TryFrom;
 
@@ -2377,15 +1721,6 @@ fn editor_process_keypress(editor_config: &EditorConfig) -> Result<Event, Error>
 
 /*** init ***/
 
-/// E.cx = 0;
-/// E.cy = 0;
-/// E.rx = 0;
-/// E.rowoff = 0;
-/// E.coloff = 0;
-/// E.numrows = 0;
-/// E.row = NULL;
-/// if (getWindowSize(&E.screenrows, &E.screencols) == -1) die("getWindowSize");
-/// E.screenrows -= 2;
 fn init_editor(stdin: RawFd, stdout: RawFd) -> Result<EditorConfig, Error> {
     let original_termios = Termios::from_fd(stdin)?;
     enable_raw_mode(stdin, original_termios)?;
