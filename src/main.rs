@@ -1,8 +1,3 @@
-/*** includes ***/
-
-extern crate nix;
-extern crate termios;
-
 use nix::unistd::{read, write};
 use std::cmp::min;
 use std::os::unix::io::RawFd;
