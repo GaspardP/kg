@@ -28,7 +28,7 @@ const fn is_ctrl(c: u8) -> bool {
     0x00 == c & CTRL_MASK
 }
 
-#[derive(Debug, std::cmp::PartialEq)]
+#[derive(Copy, Clone, Debug, std::cmp::PartialEq)]
 enum Direction {
     Down,
     Left,
@@ -36,7 +36,7 @@ enum Direction {
     Up,
 }
 
-#[derive(Debug, std::cmp::PartialEq)]
+#[derive(Copy, Clone, Debug, std::cmp::PartialEq)]
 enum Key {
     Arrow(Direction),
     Backspace,
@@ -121,6 +121,7 @@ impl From<std::num::ParseIntError> for Error {
     }
 }
 
+#[derive(Copy, Clone, Debug, std::cmp::PartialEq)]
 enum Event {
     CursorMove(Direction, u16),
     DeleteBackwardChar,
@@ -1295,10 +1296,10 @@ fn editor_save(editor_config: &mut EditorConfig) -> Result<(), Error> {
 /// "Dumb" implementation that will iterate over all the lines of the files for
 /// each new call. Iterates over all the matches found before selecting the next
 /// cursor position to colour all the items matching the query.
-fn editor_find_callback(editor_config: &mut EditorConfig, query: &str, key: &Key) {
+fn editor_find_callback(editor_config: &mut EditorConfig, query: &str, key: Key) {
     use std::convert::TryFrom;
 
-    if Key::Enter == *key || Key::Escape == *key || Key::Ctrl('g') == *key {
+    if Key::Enter == key || Key::Escape == key || Key::Ctrl('g') == key {
         return;
     }
 
@@ -1577,7 +1578,7 @@ fn editor_prompt<Callback>(
     f: Callback,
 ) -> Result<Option<String>, Error>
 where
-    Callback: Fn(&mut EditorConfig, &str, &Key),
+    Callback: Fn(&mut EditorConfig, &str, Key),
 {
     let mut buffer = String::with_capacity(128);
     loop {
@@ -1591,16 +1592,16 @@ where
             }
             Key::Enter | Key::Ctrl('m') => {
                 editor_set_status_message(editor_config, "");
-                f(editor_config, &buffer, &Key::Enter);
+                f(editor_config, &buffer, Key::Enter);
                 return Result::Ok(Some(buffer));
             }
             Key::Escape | Key::Ctrl('g') => {
-                f(editor_config, &buffer, &Key::Escape);
+                f(editor_config, &buffer, Key::Escape);
                 return Result::Ok(None);
             }
             _ => (),
         }
-        f(editor_config, &buffer, &key);
+        f(editor_config, &buffer, key);
     }
 }
 
@@ -1610,7 +1611,7 @@ where
 /// free of mutation. Using "saturating" addition and substraction to have
 /// controlled overflow. Thanks to that the min check can be skipped for
 /// substractions.
-fn editor_move_cursor(editor_config: &mut EditorConfig, direction: &Direction, times: u16) {
+fn editor_move_cursor(editor_config: &mut EditorConfig, direction: Direction, times: u16) {
     use std::convert::TryFrom;
     use Direction::{Down, Left, Right, Up};
 
@@ -1782,31 +1783,31 @@ fn main() -> Result<(), Error> {
                 break;
             }
             Event::CursorMove(direction, amount) => {
-                editor_move_cursor(&mut editor_config, &direction, amount);
+                editor_move_cursor(&mut editor_config, direction, amount);
             }
             Event::DeleteBackwardChar => {
                 editor_delete_char(&mut editor_config);
-                editor_move_cursor(&mut editor_config, &Direction::Left, 1);
+                editor_move_cursor(&mut editor_config, Direction::Left, 1);
             }
             Event::DeleteForwardChar => {
-                editor_move_cursor(&mut editor_config, &Direction::Right, 1);
+                editor_move_cursor(&mut editor_config, Direction::Right, 1);
                 editor_delete_char(&mut editor_config);
-                editor_move_cursor(&mut editor_config, &Direction::Left, 1);
+                editor_move_cursor(&mut editor_config, Direction::Left, 1);
             }
             Event::InsertChar(c) => {
                 editor_insert_char(&mut editor_config, c);
-                editor_move_cursor(&mut editor_config, &Direction::Right, 1);
+                editor_move_cursor(&mut editor_config, Direction::Right, 1);
             }
             Event::Find => {
                 editor_find(&mut editor_config)?;
             }
             Event::InsertNewline => {
                 editor_insert_newline(&mut editor_config);
-                editor_move_cursor(&mut editor_config, &Direction::Down, 1);
+                editor_move_cursor(&mut editor_config, Direction::Down, 1);
                 // Go to the beginning of the line if the cursor is not already
                 // there.
                 let (cursor_x, _) = editor_config.cursor;
-                editor_move_cursor(&mut editor_config, &Direction::Left, cursor_x);
+                editor_move_cursor(&mut editor_config, Direction::Left, cursor_x);
             }
             Event::Save => {
                 if let Err(e) = editor_save(&mut editor_config) {
