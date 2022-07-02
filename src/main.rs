@@ -7,6 +7,7 @@ use termios::{
     tcgetattr, tcsetattr, Termios, BRKINT, CS8, ECHO, ICANON, ICRNL, IEXTEN, INPCK, ISIG, ISTRIP,
     IXON, OPOST, TCSAFLUSH,
 };
+use unicode_segmentation::UnicodeSegmentation;
 
 /*** define ***/
 
@@ -156,7 +157,7 @@ struct EditorSyntax {
 }
 
 struct ERow {
-    chars: String,
+    chars: Vec<String>,
     render: String,
     hl: Vec<Highlight>,
     hl_close_comment: bool,
@@ -164,8 +165,11 @@ struct ERow {
 }
 
 impl ERow {
-    fn from(syntax_opt: Option<&EditorSyntax>, chars: &str, is_comment_open: bool) -> ERow {
-        let chars = chars.to_string();
+    fn from_vec(
+        syntax_opt: Option<&EditorSyntax>,
+        chars: Vec<String>,
+        is_comment_open: bool,
+    ) -> ERow {
         let render = editor_update_row(TAB_STOP, &chars);
         let hl = Vec::with_capacity(chars.len());
         let mut row = ERow {
@@ -177,6 +181,14 @@ impl ERow {
         };
         editor_update_syntax(syntax_opt, &mut row, is_comment_open);
         row
+    }
+
+    fn from_str(syntax_opt: Option<&EditorSyntax>, chars: &str, is_comment_open: bool) -> ERow {
+        let chars = chars
+            .graphemes(true)
+            .map(String::from)
+            .collect::<Vec<String>>();
+        ERow::from_vec(syntax_opt, chars, is_comment_open)
     }
 
     fn is_comment_open(&self) -> bool {
@@ -730,13 +742,13 @@ mod tests_editor_update_syntax {
     macro_rules! assert_hl {
         ($hl_array: expr, $chars: expr) => {
             let syntax = Some(&HLDB[0]);
-            let row = ERow::from(syntax, $chars, false);
+            let row = ERow::from_str(syntax, $chars, false);
             assert_eq!($hl_array.to_vec(), row.hl, "pattern=`{}`", $chars);
         };
         ($hl_array: expr, $previous_chars: expr, $chars: expr) => {
             let syntax = Some(&HLDB[0]);
-            let previous_row = ERow::from(syntax, $previous_chars, false);
-            let row = ERow::from(syntax, $chars, previous_row.is_comment_open());
+            let previous_row = ERow::from_str(syntax, $previous_chars, false);
+            let row = ERow::from_str(syntax, $chars, previous_row.is_comment_open());
             assert_eq!($hl_array.to_vec(), row.hl, "pattern=`{}`", $chars);
         };
     }
@@ -889,13 +901,13 @@ fn editor_select_syntax_highlight(extension: &str) -> Option<&'static EditorSynt
 /// Converts a `chars` index into a `render` index. For each tab characters
 /// located left of the cursor, we add to `cx` the number of columns needed to
 /// reach the next tab stop.
-fn editor_row_cx_to_rx(chars: &str, cx: u16) -> u16 {
+fn editor_row_cx_to_rx(chars: &[String], cx: u16) -> u16 {
     let mut rx: u16 = 0;
-    for (i, c) in chars.char_indices() {
+    for (i, c) in chars.iter().enumerate() {
         if cx as usize <= i {
             break;
         }
-        if '\t' == c {
+        if "\t" == c {
             rx += TAB_STOP - 1 - (rx % TAB_STOP);
         }
         rx += 1;
@@ -903,12 +915,12 @@ fn editor_row_cx_to_rx(chars: &str, cx: u16) -> u16 {
     rx
 }
 
-fn editor_row_rx_to_cx(chars: &str, rx: u16) -> u16 {
+fn editor_row_rx_to_cx(chars: &[String], rx: u16) -> u16 {
     use std::convert::TryFrom;
 
     let mut r = 0;
-    for (cx, c) in chars.char_indices() {
-        if '\t' == c {
+    for (cx, c) in chars.iter().enumerate() {
+        if "\t" == c {
             r += TAB_STOP - (r % TAB_STOP);
         } else {
             r += 1;
@@ -926,94 +938,120 @@ fn editor_row_rx_to_cx(chars: &str, rx: u16) -> u16 {
 /// positions that could result from moving up/down.
 #[cfg(test)]
 mod tests_cx_rx_conversions {
-    use super::*;
+    use super::{editor_row_cx_to_rx, editor_row_rx_to_cx, TAB_STOP};
+    use unicode_segmentation::UnicodeSegmentation;
+
+    macro_rules! assert_cx_to_rx {
+        ($expect: expr, $input: expr,  $cx: expr) => {
+            let input_vec: Vec<String> = $input.graphemes(true).map(String::from).collect();
+            assert_eq!($expect, editor_row_cx_to_rx(&input_vec, $cx));
+        };
+    }
+
+    macro_rules! assert_rx_to_cx {
+        ($expect: expr, $input: expr,  $cx: expr) => {
+            let input_vec: Vec<String> = $input.graphemes(true).map(String::from).collect();
+            assert_eq!($expect, editor_row_rx_to_cx(&input_vec, $cx));
+        };
+    }
+
+    macro_rules! assert_cx_rx_cx {
+        ($expect: expr, $input: expr,  $cx: expr) => {
+            let input_vec: Vec<String> = $input.graphemes(true).map(String::from).collect();
+            assert_eq!(
+                $expect,
+                editor_row_rx_to_cx(&input_vec, editor_row_cx_to_rx(&input_vec, $cx))
+            );
+        };
+    }
+
     #[test]
     fn test1_editor_cx_to_rx() {
         let chars = "	1";
-        assert_eq!(0, editor_row_cx_to_rx(chars, 0));
-        assert_eq!(TAB_STOP, editor_row_cx_to_rx(chars, 1));
-        assert_eq!(TAB_STOP + 1, editor_row_cx_to_rx(chars, 2));
-        assert_eq!(TAB_STOP + 1, editor_row_cx_to_rx(chars, 3));
+        assert_cx_to_rx!(0, chars, 0);
+        assert_cx_to_rx!(TAB_STOP, chars, 1);
+        assert_cx_to_rx!(TAB_STOP + 1, chars, 2);
+        assert_cx_to_rx!(TAB_STOP + 1, chars, 3);
 
         let chars = "	1	";
-        assert_eq!(0, editor_row_cx_to_rx(chars, 0));
-        assert_eq!(TAB_STOP, editor_row_cx_to_rx(chars, 1));
-        assert_eq!(TAB_STOP + 1, editor_row_cx_to_rx(chars, 2));
-        assert_eq!(2 * TAB_STOP, editor_row_cx_to_rx(chars, 3));
+        assert_cx_to_rx!(0, chars, 0);
+        assert_cx_to_rx!(TAB_STOP, chars, 1);
+        assert_cx_to_rx!(TAB_STOP + 1, chars, 2);
+        assert_cx_to_rx!(2 * TAB_STOP, chars, 3);
 
         let chars = "12	456	8";
-        assert_eq!(0, editor_row_cx_to_rx(chars, 0));
-        assert_eq!(1, editor_row_cx_to_rx(chars, 1));
-        assert_eq!(2, editor_row_cx_to_rx(chars, 2));
-        assert_eq!(TAB_STOP, editor_row_cx_to_rx(chars, 3));
-        assert_eq!(1 + TAB_STOP, editor_row_cx_to_rx(chars, 4));
-        assert_eq!(2 + TAB_STOP, editor_row_cx_to_rx(chars, 5));
-        assert_eq!(3 + TAB_STOP, editor_row_cx_to_rx(chars, 6));
-        assert_eq!(2 * TAB_STOP, editor_row_cx_to_rx(chars, 7));
-        assert_eq!(1 + 2 * TAB_STOP, editor_row_cx_to_rx(chars, 8));
+        assert_cx_to_rx!(0, chars, 0);
+        assert_cx_to_rx!(1, chars, 1);
+        assert_cx_to_rx!(2, chars, 2);
+        assert_cx_to_rx!(TAB_STOP, chars, 3);
+        assert_cx_to_rx!(1 + TAB_STOP, chars, 4);
+        assert_cx_to_rx!(2 + TAB_STOP, chars, 5);
+        assert_cx_to_rx!(3 + TAB_STOP, chars, 6);
+        assert_cx_to_rx!(2 * TAB_STOP, chars, 7);
+        assert_cx_to_rx!(1 + 2 * TAB_STOP, chars, 8);
     }
 
     #[test]
     fn test2_editor_rx_to_cx() {
         let chars = "	1";
-        assert_eq!(0, editor_row_rx_to_cx(chars, 0));
-        assert_eq!(1, editor_row_rx_to_cx(chars, TAB_STOP));
-        assert_eq!(2, editor_row_rx_to_cx(chars, 1 + TAB_STOP));
+        assert_rx_to_cx!(0, chars, 0);
+        assert_rx_to_cx!(1, chars, TAB_STOP);
+        assert_rx_to_cx!(2, chars, 1 + TAB_STOP);
 
         let chars = "12	";
-        assert_eq!(0, editor_row_rx_to_cx(chars, 0));
-        assert_eq!(1, editor_row_rx_to_cx(chars, 1));
-        assert_eq!(2, editor_row_rx_to_cx(chars, 2));
-        assert_eq!(3, editor_row_rx_to_cx(chars, 2 + TAB_STOP));
+        assert_rx_to_cx!(0, chars, 0);
+        assert_rx_to_cx!(1, chars, 1);
+        assert_rx_to_cx!(2, chars, 2);
+        assert_rx_to_cx!(3, chars, 2 + TAB_STOP);
 
         let chars = "	1	";
-        assert_eq!(0, editor_row_rx_to_cx(chars, 0));
-        assert_eq!(1, editor_row_rx_to_cx(chars, TAB_STOP));
-        assert_eq!(2, editor_row_rx_to_cx(chars, 1 + TAB_STOP));
-        assert_eq!(3, editor_row_rx_to_cx(chars, 2 * TAB_STOP));
+        assert_rx_to_cx!(0, chars, 0);
+        assert_rx_to_cx!(1, chars, TAB_STOP);
+        assert_rx_to_cx!(2, chars, 1 + TAB_STOP);
+        assert_rx_to_cx!(3, chars, 2 * TAB_STOP);
     }
 
     #[test]
     fn test3_editor_cx_to_rx_to_cx() {
         let chars = "	1";
-        assert_eq!(0, editor_row_rx_to_cx(chars, editor_row_cx_to_rx(chars, 0)));
-        assert_eq!(1, editor_row_rx_to_cx(chars, editor_row_cx_to_rx(chars, 1)));
-        assert_eq!(2, editor_row_rx_to_cx(chars, editor_row_cx_to_rx(chars, 2)));
+        assert_cx_rx_cx!(0, chars, 0);
+        assert_cx_rx_cx!(1, chars, 1);
+        assert_cx_rx_cx!(2, chars, 2);
 
         let chars = "	1	";
-        assert_eq!(0, editor_row_rx_to_cx(chars, editor_row_cx_to_rx(chars, 0)));
-        assert_eq!(1, editor_row_rx_to_cx(chars, editor_row_cx_to_rx(chars, 1)));
-        assert_eq!(2, editor_row_rx_to_cx(chars, editor_row_cx_to_rx(chars, 2)));
-        assert_eq!(3, editor_row_rx_to_cx(chars, editor_row_cx_to_rx(chars, 3)));
+        assert_cx_rx_cx!(0, chars, 0);
+        assert_cx_rx_cx!(1, chars, 1);
+        assert_cx_rx_cx!(2, chars, 2);
+        assert_cx_rx_cx!(3, chars, 3);
 
         let chars = "12	456	8";
-        assert_eq!(0, editor_row_rx_to_cx(chars, editor_row_cx_to_rx(chars, 0)));
-        assert_eq!(1, editor_row_rx_to_cx(chars, editor_row_cx_to_rx(chars, 1)));
-        assert_eq!(2, editor_row_rx_to_cx(chars, editor_row_cx_to_rx(chars, 2)));
-        assert_eq!(3, editor_row_rx_to_cx(chars, editor_row_cx_to_rx(chars, 3)));
-        assert_eq!(4, editor_row_rx_to_cx(chars, editor_row_cx_to_rx(chars, 4)));
-        assert_eq!(5, editor_row_rx_to_cx(chars, editor_row_cx_to_rx(chars, 5)));
-        assert_eq!(6, editor_row_rx_to_cx(chars, editor_row_cx_to_rx(chars, 6)));
-        assert_eq!(7, editor_row_rx_to_cx(chars, editor_row_cx_to_rx(chars, 7)));
-        assert_eq!(8, editor_row_rx_to_cx(chars, editor_row_cx_to_rx(chars, 8)));
+        assert_cx_rx_cx!(0, chars, 0);
+        assert_cx_rx_cx!(1, chars, 1);
+        assert_cx_rx_cx!(2, chars, 2);
+        assert_cx_rx_cx!(3, chars, 3);
+        assert_cx_rx_cx!(4, chars, 4);
+        assert_cx_rx_cx!(5, chars, 5);
+        assert_cx_rx_cx!(6, chars, 6);
+        assert_cx_rx_cx!(7, chars, 7);
+        assert_cx_rx_cx!(8, chars, 8);
     }
 }
 
 /// Replaces tabs with enough spaces to reach the next tab stop. This way the
 /// tab's display size can be controlled by the editor instead of using on the
 /// size set by the terminal.
-fn editor_update_row(tab_stop: u16, line: &str) -> String {
+fn editor_update_row(tab_stop: u16, line: &[String]) -> String {
     let tab_stop = tab_stop as usize;
     let mut s = String::new();
-    for c in line.chars() {
-        if '\t' == c {
+    for c in line {
+        if "\t" == c {
             s.push(' ');
             let end = (tab_stop - s.len() % tab_stop) % tab_stop;
             for _ in 0..end {
                 s.push(' ');
             }
         } else {
-            s.push_str(&c.to_string());
+            s.push_str(c);
         }
     }
     s
@@ -1023,60 +1061,39 @@ fn editor_update_row(tab_stop: u16, line: &str) -> String {
 /// parameter.
 #[cfg(test)]
 mod tests_update_row {
-    use super::*;
-    #[test]
-    fn test40_editor_update_row() {
-        assert_eq!("    |", editor_update_row(4, "	|"));
-    }
-    #[test]
-    fn test41_editor_update_row() {
-        assert_eq!("1   |", editor_update_row(4, "1	|"));
-    }
-    #[test]
-    fn test42_editor_update_row() {
-        assert_eq!("12  |", editor_update_row(4, "12	|"));
-    }
-    #[test]
-    fn test43_editor_update_row() {
-        assert_eq!("123 |", editor_update_row(4, "123	|"));
-    }
-    #[test]
-    fn test44_editor_update_row() {
-        assert_eq!("1234    |", editor_update_row(4, "1234	|"));
+    use super::editor_update_row;
+    use unicode_segmentation::UnicodeSegmentation;
+
+    macro_rules! assert_render {
+        ($expect: expr, $tab_size: expr,  $input: expr) => {
+            let input_vec: Vec<String> = $input.graphemes(true).map(String::from).collect();
+            assert_eq!($expect, editor_update_row($tab_size, &input_vec));
+        };
     }
 
     #[test]
-    fn test20_editor_update_row() {
-        assert_eq!("  |", editor_update_row(2, "	|"));
-    }
-    #[test]
-    fn test21_editor_update_row() {
-        assert_eq!("1 |", editor_update_row(2, "1	|"));
-    }
-    #[test]
-    fn test22_editor_update_row() {
-        assert_eq!("12  |", editor_update_row(2, "12	|"));
+    fn test2_editor_update_row() {
+        assert_render!("  |", 2, "	|");
+        assert_render!("1 |", 2, "1	|");
+        assert_render!("12  |", 2, "12	|");
     }
 
     #[test]
-    fn test80_editor_update_row() {
-        assert_eq!("        |", editor_update_row(8, "	|"));
+    fn test4_editor_update_row() {
+        assert_render!("    |", 4, "	|");
+        assert_render!("1   |", 4, "1	|");
+        assert_render!("12  |", 4, "12	|");
+        assert_render!("123 |", 4, "123	|");
+        assert_render!("1234    |", 4, "1234	|");
     }
+
     #[test]
-    fn test81_editor_update_row() {
-        assert_eq!("1       |", editor_update_row(8, "1	|"));
-    }
-    #[test]
-    fn test82_editor_update_row() {
-        assert_eq!("12      |", editor_update_row(8, "12	|"));
-    }
-    #[test]
-    fn test83_editor_update_row() {
-        assert_eq!("1234567 |", editor_update_row(8, "1234567	|"));
-    }
-    #[test]
-    fn test84_editor_update_row() {
-        assert_eq!("12345678        |", editor_update_row(8, "12345678	|"));
+    fn test8_editor_update_row() {
+        assert_render!("        |", 8, "	|");
+        assert_render!("1       |", 8, "1	|");
+        assert_render!("12      |", 8, "12	|");
+        assert_render!("1234567 |", 8, "1234567	|");
+        assert_render!("12345678        |", 8, "12345678	|");
     }
 }
 
@@ -1096,17 +1113,17 @@ fn editor_row_insert_char(
     at: usize,
     c: char,
 ) {
-    if row.chars.is_char_boundary(at) {
-        row.chars.insert(at, c);
+    if at < row.chars.len() {
+        row.chars.insert(at, c.to_string());
     } else {
-        row.chars.push(c);
+        row.chars.push(c.to_string());
     }
     row.render = editor_update_row(TAB_STOP, &row.chars);
     editor_update_syntax(syntax, row, is_comment_open);
 }
 
-fn editor_row_append_string(syntax: Option<&EditorSyntax>, row: &mut ERow, s: &str) {
-    row.chars.push_str(s);
+fn editor_row_append_string(syntax: Option<&EditorSyntax>, row: &mut ERow, s: &[String]) {
+    row.chars.extend_from_slice(s);
     row.render = editor_update_row(TAB_STOP, &row.chars);
     // Adding to the end of a known row, we don't need to look at the previous
     // to know whether we are in a comment or not
@@ -1144,7 +1161,7 @@ fn editor_insert_char(editor_config: &mut EditorConfig, c: char) {
     let is_comment_open = is_row_comment_open(&editor_config.rows, cy);
     if editor_config.rows.len() == cy {
         // Add a new line at the end of the file
-        let row = ERow::from(editor_config.syntax, &c.to_string(), is_comment_open);
+        let row = ERow::from_vec(editor_config.syntax, vec![c.to_string()], is_comment_open);
         editor_config.rows.push(row);
     } else if let Some(row) = editor_config.rows.get_mut(cy) {
         // Insert char in existing line
@@ -1161,7 +1178,7 @@ fn editor_insert_newline(editor_config: &mut EditorConfig) {
     let is_comment_open = is_row_comment_open(&editor_config.rows, cy);
     if (0, 0) == (cursor_x, cursor_y) || editor_config.rows.len() == cy {
         // Add an empty line at the beginning or the end of the file
-        let new_row = ERow::from(syntax, "", is_comment_open);
+        let new_row = ERow::from_str(syntax, "", is_comment_open);
         editor_config.rows.insert(cy, new_row);
     } else if let Some(mut row) = editor_config.rows.get_mut(cy) {
         let cx = cursor_x as usize;
@@ -1170,7 +1187,7 @@ fn editor_insert_newline(editor_config: &mut EditorConfig) {
         editor_update_syntax(syntax, row, is_comment_open);
         // New line
         cy += 1;
-        let new_row = ERow::from(syntax, &chars, row.is_comment_open());
+        let new_row = ERow::from_vec(syntax, chars, row.is_comment_open());
         editor_config.rows.insert(cy, new_row);
     }
     editor_propagate_update_syntax(editor_config.syntax, &mut editor_config.rows, cy);
@@ -1215,8 +1232,8 @@ fn editor_rows_to_string(editor_config: &EditorConfig) -> String {
     let mut text = editor_config
         .rows
         .iter()
-        .map(|erow| erow.chars.as_ref())
-        .collect::<Vec<&str>>()
+        .map(|erow| erow.chars.join(""))
+        .collect::<Vec<String>>()
         .join("\n");
     text.push('\n');
     text
@@ -1248,7 +1265,7 @@ fn editor_open(editor_config: &mut EditorConfig, filename: &str) -> Result<(), E
     let mut is_comment_open = false;
 
     while let Some(Ok(chars)) = lines.next() {
-        let row = ERow::from(editor_config.syntax, &chars, is_comment_open);
+        let row = ERow::from_str(editor_config.syntax, &chars, is_comment_open);
         is_comment_open = row.is_comment_open();
         editor_config.rows.push(row);
     }
