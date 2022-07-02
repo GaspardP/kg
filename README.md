@@ -15,6 +15,7 @@ The project depends on:
 
 - [nix][nix] for abstracting and providing a safe interface to the C POSIX
   library.
+- [unicode-segmentation][unicode]
 - [termios-rs][termios-rs] to provide safe bindings the the C termios library.
 
 
@@ -58,3 +59,4 @@ clause license.
 [kilo]: https://github.com/antirez/kilo
 [nix]: https://github.com/nix-rust/nix
 [termios-rs]: https://github.com/dcuddeback/termios-rs
+[unicode]: https://docs.rs/unicode-segmentation

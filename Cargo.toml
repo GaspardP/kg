@@ -7,3 +7,4 @@ edition = "2018"
 [dependencies]
 nix = "0.24.1"
 termios = "0.3.2"
+unicode-segmentation = "1.9.0"

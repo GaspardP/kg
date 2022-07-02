@@ -26,6 +26,7 @@ version = "1.0.1"
 dependencies = [
  "nix",
  "termios",
+ "unicode-segmentation",
 ]
 
 [[package]]
@@ -63,3 +64,9 @@ checksum = "411c5bf740737c7918b8b1fe232dca4dc9f8e754b8ad5e20966814001ed0ac6b"
 dependencies = [
  "libc",
 ]
+
+[[package]]
+name = "unicode-segmentation"
+version = "1.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7e8820f5d777f6224dc4be3632222971ac30164d4a258d595640799554ebfd99"
