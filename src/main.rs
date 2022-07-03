@@ -158,7 +158,7 @@ struct EditorSyntax {
 
 struct ERow {
     chars: Vec<String>,
-    render: String,
+    render: Vec<String>,
     hl: Vec<Highlight>,
     hl_close_comment: bool,
     hl_open_comment: bool,
@@ -476,33 +476,40 @@ fn get_window_size(stdin: RawFd, stdout: RawFd) -> Result<(u16, u16), Error> {
 
 /*** syntax highlighting ***/
 
+trait IsDigit {
+    fn is_digit(&self) -> bool;
+}
+
+impl IsDigit for String {
+    fn is_digit(&self) -> bool {
+        "1234567890".contains(self)
+    }
+}
+
 trait IsSeparator {
     fn is_separator(&self) -> bool;
 }
 
-impl IsSeparator for char {
+impl IsSeparator for String {
     fn is_separator(&self) -> bool {
-        " 	,.()+-/*=~%<>[];".find(*self).is_some()
+        " 	,.()+-/*=~%<>[];".contains(self)
     }
 }
 
-fn highlight_digits(
-    hl: &mut [Highlight],
-    chars: &[char],
-    mut i: usize,
-    syntax_flags: u8,
-) -> Option<usize> {
+fn highlight_digits(row: &mut ERow, mut i: usize, syntax_flags: u8) -> Option<usize> {
+    let hl = &mut row.hl;
+    let render = &row.render;
     let should_highlight =
-        (HL_HIGHLIGHT_NUMBERS == (syntax_flags & HL_HIGHLIGHT_NUMBERS)) && chars[i].is_digit(10);
+        (HL_HIGHLIGHT_NUMBERS == (syntax_flags & HL_HIGHLIGHT_NUMBERS)) && render[i].is_digit();
     if !should_highlight {
         return None;
     }
 
     hl[i] = Highlight::Number;
     i += 1;
-    while i < chars.len() {
-        let c = chars[i];
-        if c.is_digit(10) || c == '.' {
+    while i < render.len() {
+        let c = &render[i];
+        if c.is_digit() || c == "." {
             hl[i] = Highlight::Number;
             i += 1;
         } else {
@@ -512,15 +519,12 @@ fn highlight_digits(
     Some(i)
 }
 
-fn highlight_string(
-    hl: &mut [Highlight],
-    chars: &[char],
-    mut i: usize,
-    syntax_flags: u8,
-) -> Option<usize> {
-    let open_char = chars[i];
+fn highlight_string(row: &mut ERow, mut i: usize, syntax_flags: u8) -> Option<usize> {
+    let render = &row.render;
+    let hl = &mut row.hl;
+    let open_char = &render[i];
     let should_highlight = (HL_HIGHLIGHT_STRINGS == (syntax_flags & HL_HIGHLIGHT_STRINGS))
-        && ('"' == open_char || '\'' == open_char);
+        && ("\"" == open_char || "'" == open_char);
 
     if !should_highlight {
         return None;
@@ -529,14 +533,14 @@ fn highlight_string(
     hl[i] = Highlight::String;
     i += 1;
     // Process following chars until the end of the string
-    while i < chars.len() {
-        let c = chars[i];
+    while i < render.len() {
+        let c = &render[i];
         hl[i] = Highlight::String;
 
         if c == open_char {
             // End of string
             return Some(i + 1);
-        } else if '\\' == c {
+        } else if "\\" == c {
             // Whatever it is, next char is escaped and part of the string
             if let Some(h) = hl.get_mut(i + 1) {
                 i += 1;
@@ -552,21 +556,21 @@ fn highlight_string(
 }
 
 fn highlight_single_line_comment(
-    hl: &mut [Highlight],
-    chars: &[char],
+    row: &mut ERow,
     mut i: usize,
     single_line_comment_start: Option<&str>,
 ) -> Option<usize> {
+    let render = &row.render;
+    let hl = &mut row.hl;
     let should_highlight = if let Some(comment_start) = single_line_comment_start {
         let slice_start = i;
         let slice_end = i + comment_start.len();
-        if chars.len() < slice_end {
+        if render.len() < slice_end {
             // No space left to have the comments
             false
         } else {
             let slice_range = slice_start..slice_end;
-            let cs: String = chars[slice_range].iter().collect();
-            comment_start.len() == cs.len() && comment_start.starts_with(&cs)
+            render[slice_range] == comment_start.graphemes(true).collect::<Vec<&str>>()
         }
     } else {
         false
@@ -586,17 +590,17 @@ fn highlight_single_line_comment(
 
 fn highlight_multi_line_comment(
     row: &mut ERow,
-    chars: &[char],
     mut i: usize,
     multi_line_comment_markers: Option<(&str, &str)>,
 ) -> Option<usize> {
+    let render = &row.render;
     let (comment_start, comment_end) = multi_line_comment_markers?;
     let cs_len = comment_start.len();
 
     // Only look for the start of a comment if it is not already open
-    if !row.is_comment_open() && i + cs_len <= chars.len() {
+    if !row.is_comment_open() && i + cs_len <= render.len() {
         let hl = &mut row.hl;
-        let cs: String = chars.iter().skip(i).take(cs_len).collect();
+        let cs: String = render[i..i + cs_len].join("");
         if comment_start == cs {
             row.hl_open_comment = true;
             row.hl_close_comment = false;
@@ -613,7 +617,7 @@ fn highlight_multi_line_comment(
         let hl = &mut row.hl;
         let ce_len = comment_end.len();
         while i + ce_len <= hl.len() {
-            let part: String = chars[i..i + ce_len].iter().collect();
+            let part: String = render[i..i + ce_len].join("");
             if part == comment_end {
                 row.hl_close_comment = true;
                 for h in hl.iter_mut().skip(i).take(ce_len) {
@@ -639,22 +643,23 @@ fn highlight_multi_line_comment(
 }
 
 fn highlight_keyword(
-    hl: &mut [Highlight],
-    chars: &[char],
+    row: &mut ERow,
     i: usize,
     syntax_keyword_type: &[&str],
     syntax_keyword_reserved: &[&str],
 ) -> Option<usize> {
+    let render = &row.render;
+    let hl = &mut row.hl;
     let mut j: usize = i + 1;
 
-    while j < chars.len() {
-        if chars[j].is_separator() {
+    while j < render.len() {
+        if render[j].is_separator() {
             break;
         }
         j += 1;
     }
 
-    let word: String = chars[i..j].iter().collect();
+    let word: String = render[i..j].join("");
 
     for kw in syntax_keyword_reserved {
         if *kw == word {
@@ -677,16 +682,16 @@ fn highlight_keyword(
     None
 }
 
-fn highlight_separator(chars: &[char], i: usize) -> Option<usize> {
-    if chars[i].is_separator() {
+fn highlight_separator(render: &[String], i: usize) -> Option<usize> {
+    if render[i].is_separator() {
         Some(i + 1)
     } else {
         None
     }
 }
 
-fn highlight_default(chars: &[char], mut i: usize) -> usize {
-    while i < chars.len() && !(chars[i].is_separator() || chars[i] == '"' || chars[i] == '\'') {
+fn highlight_default(render: &[String], mut i: usize) -> usize {
+    while i < render.len() && !(render[i].is_separator() || render[i] == "\"" || render[i] == "'") {
         i += 1;
     }
     i
@@ -704,34 +709,16 @@ fn editor_update_syntax(syntax_opt: Option<&EditorSyntax>, row: &mut ERow, is_co
 
     row.hl_open_comment = is_comment_open;
     row.hl_close_comment = false;
-    let chars: Vec<char> = render.chars().collect();
     let mut i: usize = 0;
 
-    while i < chars.len() {
-        i = highlight_string(&mut row.hl, &chars, i, syntax.flags)
-            .or_else(|| highlight_digits(&mut row.hl, &chars, i, syntax.flags))
-            .or_else(|| {
-                highlight_single_line_comment(
-                    &mut row.hl,
-                    &chars,
-                    i,
-                    syntax.single_line_comment_start,
-                )
-            })
-            .or_else(|| {
-                highlight_multi_line_comment(row, &chars, i, syntax.multi_line_comment_markers)
-            })
-            .or_else(|| {
-                highlight_keyword(
-                    &mut row.hl,
-                    &chars,
-                    i,
-                    syntax.keyword_type,
-                    syntax.keyword_reserved,
-                )
-            })
-            .or_else(|| highlight_separator(&chars, i))
-            .unwrap_or_else(|| highlight_default(&chars, i));
+    while i < row.render.len() {
+        i = highlight_string(row, i, syntax.flags)
+            .or_else(|| highlight_digits(row, i, syntax.flags))
+            .or_else(|| highlight_single_line_comment(row, i, syntax.single_line_comment_start))
+            .or_else(|| highlight_multi_line_comment(row, i, syntax.multi_line_comment_markers))
+            .or_else(|| highlight_keyword(row, i, syntax.keyword_type, syntax.keyword_reserved))
+            .or_else(|| highlight_separator(&row.render, i))
+            .unwrap_or_else(|| highlight_default(&row.render, i));
     }
 }
 
@@ -834,6 +821,13 @@ mod tests_editor_update_syntax {
             [H, H, H, H, H, R, R, H, H, H, H, C, C, C, C, C],
             "abcd if ee // ad"
         );
+    }
+
+    #[test]
+    fn test_tabs() {
+        // Expects `TAB_STOP` to be set to 4
+        assert_hl!([H, H, H, H, R, R, H, H, H, H], "	if abc");
+        assert_hl!([H, H, H, H, N, N, N, H, C, C, C, C, C, C], "	123	// abc");
     }
 }
 
@@ -1040,21 +1034,21 @@ mod tests_cx_rx_conversions {
 /// Replaces tabs with enough spaces to reach the next tab stop. This way the
 /// tab's display size can be controlled by the editor instead of using on the
 /// size set by the terminal.
-fn editor_update_row(tab_stop: u16, line: &[String]) -> String {
+fn editor_update_row(tab_stop: u16, line: &[String]) -> Vec<String> {
     let tab_stop = tab_stop as usize;
-    let mut s = String::new();
+    let mut v: Vec<String> = Vec::new();
     for c in line {
         if "\t" == c {
-            s.push(' ');
-            let end = (tab_stop - s.len() % tab_stop) % tab_stop;
+            v.push(String::from(" "));
+            let end = (tab_stop - v.len() % tab_stop) % tab_stop;
             for _ in 0..end {
-                s.push(' ');
+                v.push(String::from(" "));
             }
         } else {
-            s.push_str(c);
+            v.push(String::from(c));
         }
     }
-    s
+    v
 }
 
 /// Test the conversion of '\t' characters to spaces depending on the tabstop
@@ -1067,7 +1061,8 @@ mod tests_update_row {
     macro_rules! assert_render {
         ($expect: expr, $tab_size: expr,  $input: expr) => {
             let input_vec: Vec<String> = $input.graphemes(true).map(String::from).collect();
-            assert_eq!($expect, editor_update_row($tab_size, &input_vec));
+            let expect_vec: Vec<String> = $expect.graphemes(true).map(String::from).collect();
+            assert_eq!(expect_vec, editor_update_row($tab_size, &input_vec));
         };
     }
 
@@ -1319,7 +1314,7 @@ fn editor_find_callback(editor_config: &mut EditorConfig, query: &str, key: Key)
         .rows
         .iter_mut()
         .enumerate()
-        .filter_map(|(cy, row)| row.render.find(&query).map(|rx| (row, rx, cy)))
+        .filter_map(|(cy, row)| row.render.join("").find(&query).map(|rx| (row, rx, cy)))
         .map(|(row, rx, cy)| {
             // Highlight chars marching the query in the row
             for i in row.hl.iter_mut().skip(rx).take(query.len()) {
@@ -1443,8 +1438,15 @@ fn editor_draw_rows(editor_config: &EditorConfig, ab: &mut Vec<u8>) {
             let hl = &row.hl;
             let line_begin = min(file_col, line.len());
             let line_end = min(line.len(), screen_cols + file_col);
-            for (i, b) in line[line_begin..line_end].bytes().enumerate() {
-                if is_ctrl(b) {
+            for (i, s) in line
+                .iter()
+                .skip(line_begin)
+                .take(line_end - line_begin)
+                .enumerate()
+            {
+                let bytes = s.as_bytes();
+                if bytes.len() == 1 && is_ctrl(bytes[0]) {
+                    let b = bytes[0];
                     let sym: u8 = if b <= 26 { b'@' + b } else { b'?' };
                     ab.extend(INVERT_COLOUR);
                     ab.push(sym);
@@ -1456,7 +1458,7 @@ fn editor_draw_rows(editor_config: &EditorConfig, ab: &mut Vec<u8>) {
                     highlight = hl[line_begin + i];
                     ab.extend(editor_syntax_to_color(highlight));
                 }
-                ab.push(b);
+                ab.extend(bytes);
             }
             ab.extend(colors::DEFAULT_FOREGROUND);
         } else if rows.is_empty() && y == screen_rows / 3 {
