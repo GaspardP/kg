@@ -1,3 +1,5 @@
+mod syntax;
+
 use nix::unistd::{read, write};
 use std::cmp::min;
 use std::os::unix::io::RawFd;
@@ -154,6 +156,8 @@ struct EditorSyntax {
     /// Marker for start of comment
     single_line_comment_start: Option<&'static str>,
     multi_line_comment_markers: Option<(&'static str, &'static str)>,
+    /// Parser
+    parser_fn: &'static dyn Fn() -> tree_sitter::Parser,
 }
 
 struct ERow {
@@ -225,6 +229,8 @@ struct EditorConfig {
     filename: Option<String>,
     status_message: Option<StatusMessage>,
     syntax: Option<&'static EditorSyntax>,
+    parser: Option<tree_sitter::Parser>,
+    tree: Option<tree_sitter::Tree>,
 }
 
 impl Drop for EditorConfig {
@@ -274,6 +280,7 @@ const HLDB: &[EditorSyntax] = &[
         keyword_type: &C_HL_KW_TYPE,
         single_line_comment_start: Some("//"),
         multi_line_comment_markers: Some(("/*", "*/")),
+        parser_fn: &syntax::c,
     },
     EditorSyntax {
         file_type: "rust",
@@ -283,6 +290,7 @@ const HLDB: &[EditorSyntax] = &[
         keyword_type: &RS_HL_KW_TYPE,
         single_line_comment_start: Some("//"),
         multi_line_comment_markers: Some(("/*", "*/")),
+        parser_fn: &syntax::rust,
     },
 ];
 
@@ -1251,7 +1259,10 @@ fn editor_open(editor_config: &mut EditorConfig, filename: &str) -> Result<(), E
     let ext_opt = file_path.extension().and_then(std::ffi::OsStr::to_str);
 
     if let Some(extension) = ext_opt {
-        editor_config.syntax = editor_select_syntax_highlight(extension);
+        if let Some(syntax) = editor_select_syntax_highlight(extension) {
+            editor_config.syntax = Some(syntax);
+            editor_config.parser = Some((syntax.parser_fn)());
+        }
     }
 
     let file = File::open(filename)?;
@@ -1264,6 +1275,15 @@ fn editor_open(editor_config: &mut EditorConfig, filename: &str) -> Result<(), E
         is_comment_open = row.is_comment_open();
         editor_config.rows.push(row);
     }
+
+    editor_config.tree = syntax::load_code(
+        editor_config.parser.as_mut(),
+        &editor_config
+            .rows
+            .iter()
+            .map(|r| r.chars.join(""))
+            .collect::<Vec<String>>(),
+    );
 
     editor_config.dirty = false;
     Result::Ok(())
@@ -1754,6 +1774,8 @@ fn init_editor(stdin: RawFd, stdout: RawFd) -> Result<EditorConfig, Error> {
         filename: Option::None,
         status_message: Option::None,
         syntax: Option::None,
+        parser: None,
+        tree: None,
     };
     Result::Ok(editor_config)
 }
