@@ -39,7 +39,6 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 name = "kg"
 version = "1.0.0"
 dependencies = [
- "cc",
  "nix",
  "termios",
  "tree-sitter",
@@ -50,9 +49,9 @@ dependencies = [
 
 [[package]]
 name = "libc"
-version = "0.2.126"
+version = "0.2.131"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "349d5a591cd28b49e1d1037471617a32ddcda5731b99419008085f72d5a53836"
+checksum = "04c3b4822ccebfa39c02fc03d1534441b22ead323fa0f48bb7ddd8e6ba076a40"
 
 [[package]]
 name = "memchr"
@@ -71,9 +70,9 @@ dependencies = [
 
 [[package]]
 name = "nix"
-version = "0.24.1"
+version = "0.24.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f17df307904acd05aa8e32e97bb20f2a0df1728bbc2d771ae8f9a90463441e9"
+checksum = "195cdbc1741b8134346d515b3a56a1c94b0912758009cfd53f99ea0f57b065fc"
 dependencies = [
  "bitflags",
  "cfg-if",
@@ -119,9 +118,9 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-c"
-version = "0.20.1"
+version = "0.20.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7bdc5574c6cbc39c409246caeb1dd4d3c4bd6d30d4e9b399776086c20365fd24"
+checksum = "cca211f4827d4b4dc79f388bf67b6fa3bc8a8cfa642161ef24f99f371ba34c7b"
 dependencies = [
  "cc",
  "tree-sitter",

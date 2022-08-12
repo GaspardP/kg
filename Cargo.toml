@@ -8,10 +8,6 @@ edition = "2018"
 nix = "0.24.1"
 termios = "0.3.2"
 unicode-segmentation = "1.9.0"
-tree-sitter="0.20.8"
+tree-sitter="0.20.8" # https://docs.rs/tree-sitter/latest/tree_sitter/
 tree-sitter-c = "0.20.1"
 tree-sitter-rust = "0.20.1"
-
-[build-dependencies]
-# Required by tree-siiter
-cc="1.0"
