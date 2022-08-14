@@ -1,5 +1,7 @@
+mod editor;
 mod syntax;
 
+use editor::{Highlight, Row as ERow, Syntax as EditorSyntax, TAB_STOP};
 use nix::unistd::{read, write};
 use std::cmp::min;
 use std::os::unix::io::RawFd;
@@ -15,7 +17,6 @@ use unicode_segmentation::UnicodeSegmentation;
 
 const PKG_NAME: &str = env!("CARGO_PKG_NAME");
 const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
-const TAB_STOP: u16 = 4;
 const QUIT_TIMES: u8 = 3;
 
 const CTRL_MASK: u8 = 0x60;
@@ -130,74 +131,6 @@ enum Event {
     None,
     Quit,
     Save,
-}
-
-#[derive(Clone, Copy, Debug, std::cmp::PartialEq)]
-enum Highlight {
-    Comment,
-    CommentMultiline,
-    KeywordReserved,
-    KeywordType,
-    Match,
-    Normal,
-    Number,
-    String,
-}
-
-struct EditorSyntax {
-    /// Name of the type displayed in the  status bar
-    file_type: &'static str,
-    /// Patterns to match the filename against
-    file_match: &'static [&'static str],
-    /// Highlights information for the type
-    flags: u8,
-    keyword_reserved: &'static [&'static str],
-    keyword_type: &'static [&'static str],
-    /// Marker for start of comment
-    single_line_comment_start: Option<&'static str>,
-    multi_line_comment_markers: Option<(&'static str, &'static str)>,
-    /// Parser
-    parser_fn: &'static dyn Fn() -> tree_sitter::Parser,
-}
-
-struct ERow {
-    chars: Vec<String>,
-    render: Vec<String>,
-    hl: Vec<Highlight>,
-    hl_close_comment: bool,
-    hl_open_comment: bool,
-}
-
-impl ERow {
-    fn from_vec(
-        syntax_opt: Option<&EditorSyntax>,
-        chars: Vec<String>,
-        is_comment_open: bool,
-    ) -> ERow {
-        let render = editor_update_row(TAB_STOP, &chars);
-        let hl = Vec::with_capacity(chars.len());
-        let mut row = ERow {
-            chars,
-            render,
-            hl,
-            hl_open_comment: false,
-            hl_close_comment: false,
-        };
-        editor_update_syntax(syntax_opt, &mut row, is_comment_open);
-        row
-    }
-
-    fn from_str(syntax_opt: Option<&EditorSyntax>, chars: &str, is_comment_open: bool) -> ERow {
-        let chars = chars
-            .graphemes(true)
-            .map(String::from)
-            .collect::<Vec<String>>();
-        ERow::from_vec(syntax_opt, chars, is_comment_open)
-    }
-
-    fn is_comment_open(&self) -> bool {
-        self.hl_open_comment && !self.hl_close_comment
-    }
 }
 
 fn is_row_comment_open(rows: &[ERow], cy: usize) -> bool {
@@ -705,11 +638,15 @@ fn highlight_default(render: &[String], mut i: usize) -> usize {
     i
 }
 
-fn editor_update_syntax(syntax_opt: Option<&EditorSyntax>, row: &mut ERow, is_comment_open: bool) {
+fn editor_update_syntax(
+    _syntax_opt: Option<&EditorSyntax>,
+    row: &mut ERow,
+    _is_comment_open: bool,
+) {
     let render = &row.render;
     row.hl.clear();
     row.hl.resize(render.len(), Highlight::Normal);
-
+    /*
     if syntax_opt.is_none() {
         return;
     }
@@ -728,6 +665,7 @@ fn editor_update_syntax(syntax_opt: Option<&EditorSyntax>, row: &mut ERow, is_co
             .or_else(|| highlight_separator(&row.render, i))
             .unwrap_or_else(|| highlight_default(&row.render, i));
     }
+    */
 }
 
 #[cfg(test)]
@@ -1276,7 +1214,7 @@ fn editor_open(editor_config: &mut EditorConfig, filename: &str) -> Result<(), E
         editor_config.rows.push(row);
     }
 
-    editor_config.tree = syntax::load_code(
+    let tree = syntax::load_code(
         editor_config.parser.as_mut(),
         &editor_config
             .rows
@@ -1284,6 +1222,8 @@ fn editor_open(editor_config: &mut EditorConfig, filename: &str) -> Result<(), E
             .map(|r| r.chars.join(""))
             .collect::<Vec<String>>(),
     );
+    syntax::highlight(&mut editor_config.rows, tree.as_ref().unwrap());
+    editor_config.tree = tree;
 
     editor_config.dirty = false;
     Result::Ok(())

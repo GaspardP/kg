@@ -1,3 +1,5 @@
+use crate::editor::{Highlight, Row as ERow};
+
 #[allow(unused_imports)]
 use tree_sitter::{InputEdit, Node, Parser, Point, Query, QueryCursor, QueryMatches, Tree};
 
@@ -18,8 +20,8 @@ pub fn rust() -> Parser {
     parser
 }
 
-/// Uses UTF16 representation to make it easier to extract Position for utf8
-/// text
+/// Uses UTF16 representation to make it easier to extract Position for wide
+/// charaters in utf8 text
 pub fn load_code(parser: Option<&mut Parser>, rows: &[String]) -> Option<Tree> {
     let source_utf16: Vec<u16> = std::str::from_utf8(rows.join("\n").as_bytes())
         .unwrap()
@@ -39,21 +41,39 @@ fn query_rust_number() -> Query {
     .expect("Malformed query")
 }
 
-fn find_numbers(rows: &[String], tree: &Tree) -> Vec<(Point, Point)> {
-    let source = rows.join("\n");
+fn find_numbers(source: &[u8], tree: &Tree) -> Vec<(Point, Point)> {
     let mut cursor = QueryCursor::new();
     return cursor
-        .captures(&query_rust_number(), tree.root_node(), source.as_bytes())
-        .map(|(query_match, capture_index)| return query_match.captures[capture_index].node)
+        .captures(&query_rust_number(), tree.root_node(), source)
+        .map(|(query_match, capture_index)| query_match.captures[capture_index].node)
         .map(|node| {
             let start_position = node.start_position();
             let end_position = node.end_position();
-            return (
+            (
                 Point::new(start_position.row, start_position.column / 2),
                 Point::new(end_position.row, end_position.column / 2),
-            );
+            )
         })
         .collect::<Vec<(Point, Point)>>();
+}
+
+pub fn highlight(rows: &mut [ERow], tree: &Tree) {
+    let markers = find_numbers(
+        rows.iter()
+            .map(|r| r.render.join(""))
+            .collect::<Vec<String>>()
+            .join("\n")
+            .as_bytes(),
+        tree,
+    );
+    eprintln!("Found some numbers: {:?}", markers);
+    for (start, end) in markers {
+        if let Some(row) = rows.get_mut(start.row) {
+            eprintln!("Updating section {:?} -> {:?}", start, end);
+            let hs = vec![Highlight::Number; end.column - start.column];
+            row.hl[start.column..end.column].copy_from_slice(&hs);
+        }
+    }
 }
 
 #[cfg(test)]
