@@ -4,6 +4,7 @@ use nix::unistd::{read, write};
 use std::cmp::min;
 use std::os::unix::io::RawFd;
 use std::time::{Duration, Instant};
+use syntax::Highlight;
 use termios::os::target::{VMIN, VTIME};
 use termios::{
     tcgetattr, tcsetattr, Termios, BRKINT, CS8, ECHO, ICANON, ICRNL, IEXTEN, INPCK, ISIG, ISTRIP,
@@ -127,19 +128,6 @@ enum Event {
     None,
     Quit,
     Save,
-}
-
-#[allow(dead_code)]
-#[derive(Clone, Copy, Debug, std::cmp::PartialEq)]
-enum Highlight {
-    Comment,
-    CommentMultiline,
-    KeywordReserved,
-    KeywordType,
-    Match,
-    Normal,
-    Number,
-    String,
 }
 
 struct EditorSyntax {
@@ -817,14 +805,20 @@ fn editor_open(editor_config: &mut EditorConfig, filename: &str) -> Result<(), E
         editor_config.rows.push(row);
     }
 
-    editor_config.tree = syntax::load_code(
-        editor_config.parser.as_mut(),
-        &editor_config
-            .rows
-            .iter()
-            .map(|r| r.chars.join(""))
-            .collect::<Vec<String>>(),
-    );
+    let source: String = editor_config
+        .rows
+        .iter()
+        .map(|r| r.chars.join(""))
+        .collect::<Vec<String>>()
+        .join("\n");
+    let mut hs: Vec<&mut Vec<Highlight>> = editor_config
+        .rows
+        .iter_mut()
+        .map(|r| &mut r.hl)
+        .collect::<Vec<&mut Vec<Highlight>>>();
+    let tree = syntax::load_code(editor_config.parser.as_mut(), source.as_bytes());
+    syntax::highlight(source.as_bytes(), &mut hs, tree.as_ref().unwrap());
+    editor_config.tree = tree;
 
     editor_config.dirty = false;
     Result::Ok(())

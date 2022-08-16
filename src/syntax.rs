@@ -1,7 +1,20 @@
+/// https://docs.rs/tree-sitter/latest/tree_sitter/
 /// https://deepsource.io/blog/lightweight-linting/
 /// https://tree-sitter.github.io/tree-sitter/playground
-#[allow(unused_imports)]
-use tree_sitter::{InputEdit, Node, Parser, Point, Query, QueryCursor, QueryMatches, Tree};
+use tree_sitter::{Parser, Point, Query, QueryCursor, Tree};
+
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, std::cmp::PartialEq)]
+pub enum Highlight {
+    Comment,
+    CommentMultiline,
+    KeywordReserved,
+    KeywordType,
+    Match,
+    Normal,
+    Number,
+    String,
+}
 
 pub fn c() -> Parser {
     let mut parser = Parser::new();
@@ -20,8 +33,10 @@ pub fn rust() -> Parser {
     parser
 }
 
-pub fn load_code(parser: Option<&mut Parser>, rows: &[String]) -> Option<Tree> {
-    let source_utf16: Vec<u16> = std::str::from_utf8(rows.join("\n").as_bytes())
+/// Uses UTF16 representation to make it easier to extract Position for wide
+/// charaters in utf8 text
+pub fn load_code(parser: Option<&mut Parser>, source: &[u8]) -> Option<Tree> {
+    let source_utf16: Vec<u16> = std::str::from_utf8(source)
         .unwrap()
         .encode_utf16()
         .collect();
@@ -37,11 +52,10 @@ fn query_rust_number() -> Query {
     .expect("Malformed query")
 }
 
-fn find_numbers(rows: &[String], tree: &Tree) -> Vec<(Point, Point)> {
-    let source = rows.join("\n");
+fn find_numbers(source: &[u8], tree: &Tree) -> Vec<(Point, Point)> {
     let mut cursor = QueryCursor::new();
     return cursor
-        .captures(&query_rust_number(), tree.root_node(), source.as_bytes())
+        .captures(&query_rust_number(), tree.root_node(), source)
         .map(|(query_match, capture_index)| query_match.captures[capture_index].node)
         .map(|node| {
             let start_position = node.start_position();
@@ -52,6 +66,17 @@ fn find_numbers(rows: &[String], tree: &Tree) -> Vec<(Point, Point)> {
             )
         })
         .collect::<Vec<(Point, Point)>>();
+}
+
+pub fn highlight(source: &[u8], hs: &mut [&mut Vec<Highlight>], tree: &Tree) {
+    let markers = find_numbers(source, tree);
+    for (start, end) in markers {
+        if let Some(h) = hs.get_mut(start.row) {
+            for i in start.column..end.column {
+                h[i] = Highlight::Number;
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -67,10 +92,10 @@ mod test_node_types_parsing {
             "const 안:f32 = 4.5;",
             "const AA:u32 = 678;",
         ]
-        .map(String::from);
+        .join("\n");
 
-        let tree = load_code(Some(&mut rust()), &source_utf8).unwrap();
-        let positions = find_numbers(&source_utf8, &tree);
+        let tree = load_code(Some(&mut rust()), &source_utf8.as_bytes()).unwrap();
+        let positions = find_numbers(&source_utf8.as_bytes(), &tree);
 
         assert_eq!(
             vec![
