@@ -146,20 +146,18 @@ struct ERow {
 }
 
 impl ERow {
-    fn from_vec(syntax_opt: Option<&EditorSyntax>, chars: Vec<String>) -> ERow {
+    fn from_vec(chars: Vec<String>) -> ERow {
         let render = editor_update_row(TAB_STOP, &chars);
-        let hl = Vec::with_capacity(chars.len());
-        let mut row = ERow { chars, render, hl };
-        editor_update_syntax(syntax_opt, &mut row);
-        row
+        let hl = vec![Highlight::Normal; render.len()];
+        ERow { chars, render, hl }
     }
 
-    fn from_str(syntax_opt: Option<&EditorSyntax>, chars: &str) -> ERow {
+    fn from_str(chars: &str) -> ERow {
         let chars = chars
             .graphemes(true)
             .map(String::from)
             .collect::<Vec<String>>();
-        ERow::from_vec(syntax_opt, chars)
+        ERow::from_vec(chars)
     }
 }
 
@@ -410,10 +408,29 @@ fn get_window_size(stdin: RawFd, stdout: RawFd) -> Result<(u16, u16), Error> {
 
 /*** syntax highlighting ***/
 
-fn editor_update_syntax(_syntax_opt: Option<&EditorSyntax>, row: &mut ERow) {
-    let render = &row.render;
-    row.hl.clear();
-    row.hl.resize(render.len(), Highlight::Normal);
+fn editor_update_syntax(editor_config: &mut EditorConfig, cys: Vec<usize>) {
+    // If a row was updated, clear its highlight
+    for cy in cys {
+        if let Some(row) = editor_config.rows.get_mut(cy) {
+            row.hl.clear();
+            row.hl.resize(row.render.len(), Highlight::Normal);
+        }
+    }
+
+    let source: String = editor_config
+        .rows
+        .iter()
+        .map(|r| r.render.join(""))
+        .collect::<Vec<String>>()
+        .join("\n");
+    let mut hs: Vec<&mut Vec<Highlight>> = editor_config
+        .rows
+        .iter_mut()
+        .map(|r| &mut r.hl)
+        .collect::<Vec<&mut Vec<Highlight>>>();
+    let tree = syntax::load_code(editor_config.parser.as_mut(), source.as_bytes());
+    syntax::highlight(source.as_bytes(), &mut hs, tree.as_ref().unwrap());
+    editor_config.tree = tree;
 }
 
 fn editor_syntax_to_color(h: Highlight) -> &'static [u8] {
@@ -658,32 +675,27 @@ fn editor_delete_row(editor_config: &mut EditorConfig, at: usize) -> Option<ERow
     }
 }
 
-fn editor_row_insert_char(syntax: Option<&EditorSyntax>, row: &mut ERow, at: usize, c: char) {
+fn editor_row_insert_char(row: &mut ERow, at: usize, c: char) {
     if at < row.chars.len() {
         row.chars.insert(at, c.to_string());
     } else {
         row.chars.push(c.to_string());
     }
     row.render = editor_update_row(TAB_STOP, &row.chars);
-    editor_update_syntax(syntax, row);
 }
 
-fn editor_row_append_string(syntax: Option<&EditorSyntax>, row: &mut ERow, s: &[String]) {
+fn editor_row_append_string(row: &mut ERow, s: &[String]) {
     row.chars.extend_from_slice(s);
     row.render = editor_update_row(TAB_STOP, &row.chars);
-    // Adding to the end of a known row, we don't need to look at the previous
-    // to know whether we are in a comment or not
-    editor_update_syntax(syntax, row);
 }
 
 /// Removes the character on the left of the cursor.
-fn editor_row_delete_char(syntax: Option<&EditorSyntax>, row: &mut ERow, at: usize) {
+fn editor_row_delete_char(row: &mut ERow, at: usize) {
     if at == 0 || row.chars.len() < at {
         return;
     }
     row.chars.remove(at - 1);
     row.render = editor_update_row(TAB_STOP, &row.chars);
-    editor_update_syntax(syntax, row);
 }
 
 /*** editor operations ***/
@@ -700,32 +712,35 @@ fn editor_insert_char(editor_config: &mut EditorConfig, c: char) {
     let cy = cursor_y as usize;
     if editor_config.rows.len() == cy {
         // Add a new line at the end of the file
-        let row = ERow::from_vec(editor_config.syntax, vec![c.to_string()]);
+        let row = ERow::from_vec(vec![c.to_string()]);
         editor_config.rows.push(row);
     } else if let Some(row) = editor_config.rows.get_mut(cy) {
         // Insert char in existing line
-        editor_row_insert_char(editor_config.syntax, row, cx, c);
+        editor_row_insert_char(row, cx, c);
     }
+    editor_update_syntax(editor_config, vec![cy]);
     editor_config.dirty = true;
 }
 
 fn editor_insert_newline(editor_config: &mut EditorConfig) {
-    let syntax = editor_config.syntax;
     let (cursor_x, cursor_y) = editor_config.cursor;
     let mut cy = cursor_y as usize;
     if (0, 0) == (cursor_x, cursor_y) || editor_config.rows.len() == cy {
         // Add an empty line at the beginning or the end of the file
-        let new_row = ERow::from_str(syntax, "");
+        let new_row = ERow::from_str("");
         editor_config.rows.insert(cy, new_row);
-    } else if let Some(mut row) = editor_config.rows.get_mut(cy) {
-        let cx = cursor_x as usize;
-        let chars = row.chars.split_off(cx);
-        row.render = editor_update_row(TAB_STOP, &row.chars);
-        editor_update_syntax(syntax, row);
-        // New line
-        cy += 1;
-        let new_row = ERow::from_vec(syntax, chars);
-        editor_config.rows.insert(cy, new_row);
+        editor_update_syntax(editor_config, vec![cy]);
+    } else {
+        if let Some(mut row) = editor_config.rows.get_mut(cy) {
+            let cx = cursor_x as usize;
+            let chars = row.chars.split_off(cx);
+            row.render = editor_update_row(TAB_STOP, &row.chars);
+            // New line
+            cy += 1;
+            let new_row = ERow::from_vec(chars);
+            editor_config.rows.insert(cy, new_row);
+        }
+        editor_update_syntax(editor_config, vec![cy - 1, cy]);
     }
 }
 
@@ -748,15 +763,12 @@ fn editor_delete_char(editor_config: &mut EditorConfig) {
             editor_config.cursor = (cursor_x + 1, cursor_y - 1);
             // Merge previous and current lines
             cy -= 1;
-            editor_row_append_string(
-                editor_config.syntax,
-                &mut editor_config.rows[cy],
-                &current_row.chars,
-            );
+            editor_row_append_string(&mut editor_config.rows[cy], &current_row.chars);
         }
     } else if let Some(row) = editor_config.rows.get_mut(cy) {
-        editor_row_delete_char(editor_config.syntax, row, cx);
+        editor_row_delete_char(row, cx);
     }
+    editor_update_syntax(editor_config, vec![cy]);
     editor_config.dirty = true;
 }
 
@@ -801,25 +813,11 @@ fn editor_open(editor_config: &mut EditorConfig, filename: &str) -> Result<(), E
     let mut lines = reader.lines();
 
     while let Some(Ok(chars)) = lines.next() {
-        let row = ERow::from_str(editor_config.syntax, &chars);
+        let row = ERow::from_str(&chars);
         editor_config.rows.push(row);
     }
 
-    let source: String = editor_config
-        .rows
-        .iter()
-        .map(|r| r.chars.join(""))
-        .collect::<Vec<String>>()
-        .join("\n");
-    let mut hs: Vec<&mut Vec<Highlight>> = editor_config
-        .rows
-        .iter_mut()
-        .map(|r| &mut r.hl)
-        .collect::<Vec<&mut Vec<Highlight>>>();
-    let tree = syntax::load_code(editor_config.parser.as_mut(), source.as_bytes());
-    syntax::highlight(source.as_bytes(), &mut hs, tree.as_ref().unwrap());
-    editor_config.tree = tree;
-
+    editor_update_syntax(editor_config, vec![]);
     editor_config.dirty = false;
     Result::Ok(())
 }
