@@ -130,15 +130,6 @@ enum Event {
     Save,
 }
 
-struct EditorSyntax {
-    /// Name of the type displayed in the  status bar
-    file_type: &'static str,
-    /// Patterns to match the filename against
-    file_match: &'static [&'static str],
-    /// Parser
-    parser_fn: &'static dyn Fn() -> tree_sitter::Parser,
-}
-
 struct ERow {
     chars: Vec<String>,
     render: Vec<String>,
@@ -181,9 +172,7 @@ struct EditorConfig {
     screen_cols: u16,
     filename: Option<String>,
     status_message: Option<StatusMessage>,
-    syntax: Option<&'static EditorSyntax>,
-    parser: Option<tree_sitter::Parser>,
-    tree: Option<tree_sitter::Tree>,
+    syntax: Option<syntax::Syntax>,
 }
 
 impl Drop for EditorConfig {
@@ -199,24 +188,6 @@ impl Drop for EditorConfig {
         disable_raw_mode(self.stdin, self.original_termios).expect("Couldn't disable raw mode");
     }
 }
-
-/*** filetypes ***/
-
-const C_HL_EXT: [&str; 3] = ["c", "h", "cpp"];
-const RS_HL_EXT: [&str; 1] = ["rs"];
-
-const HLDB: &[EditorSyntax] = &[
-    EditorSyntax {
-        file_type: "C",
-        file_match: &C_HL_EXT,
-        parser_fn: &syntax::c,
-    },
-    EditorSyntax {
-        file_type: "rust",
-        file_match: &RS_HL_EXT,
-        parser_fn: &syntax::rust,
-    },
-];
 
 /*** terminal ***/
 
@@ -428,9 +399,8 @@ fn editor_update_syntax(editor_config: &mut EditorConfig, cys: Vec<usize>) {
         .iter_mut()
         .map(|r| &mut r.hl)
         .collect::<Vec<&mut Vec<Highlight>>>();
-    let tree = syntax::load_code(editor_config.parser.as_mut(), source.as_bytes());
-    syntax::highlight(source.as_bytes(), &mut hs, tree.as_ref().unwrap());
-    editor_config.tree = tree;
+    syntax::load_code(editor_config.syntax.as_mut(), source.as_bytes());
+    syntax::highlight(editor_config.syntax.as_ref(), source.as_bytes(), &mut hs);
 }
 
 fn editor_syntax_to_color(h: Highlight) -> &'static [u8] {
@@ -451,17 +421,6 @@ fn editor_syntax_to_color(h: Highlight) -> &'static [u8] {
         Number => RED_FOREGROUND,
         String => MAGENTA_FOREGROUND,
     }
-}
-
-fn editor_select_syntax_highlight(extension: &str) -> Option<&'static EditorSyntax> {
-    for syntax in HLDB {
-        for file_ext in syntax.file_match {
-            if *file_ext == extension {
-                return Some(syntax);
-            }
-        }
-    }
-    Option::None
 }
 
 /*** row operation ***/
@@ -799,14 +758,10 @@ fn editor_open(editor_config: &mut EditorConfig, filename: &str) -> Result<(), E
         .file_name()
         .and_then(std::ffi::OsStr::to_str)
         .map(std::string::ToString::to_string);
-    let ext_opt = file_path.extension().and_then(std::ffi::OsStr::to_str);
-
-    if let Some(extension) = ext_opt {
-        if let Some(syntax) = editor_select_syntax_highlight(extension) {
-            editor_config.syntax = Some(syntax);
-            editor_config.parser = Some((syntax.parser_fn)());
-        }
-    }
+    editor_config.syntax = file_path
+        .extension()
+        .and_then(std::ffi::OsStr::to_str)
+        .and_then(syntax::select_syntax_highlight);
 
     let file = File::open(filename)?;
     let reader = BufReader::new(file);
@@ -1065,7 +1020,7 @@ fn editor_draw_status_bar(editor_config: &EditorConfig, ab: &mut Vec<u8>) {
     let mode = editor_config
         .syntax
         .as_ref()
-        .map_or("unknown", |syntax| syntax.file_type);
+        .map_or("unknown", |syntax| syntax.mode_name);
     let mode_position = format!("{} | {}/{}", mode, cy + 1, numrows);
     let padding = width.saturating_sub(file_info.len());
     let status = format!(
@@ -1307,8 +1262,6 @@ fn init_editor(stdin: RawFd, stdout: RawFd) -> Result<EditorConfig, Error> {
         filename: Option::None,
         status_message: Option::None,
         syntax: Option::None,
-        parser: None,
-        tree: None,
     };
     Result::Ok(editor_config)
 }

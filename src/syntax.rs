@@ -16,46 +16,105 @@ pub enum Highlight {
     String,
 }
 
-pub fn c() -> Parser {
+pub struct Syntax {
+    hl_rules: Vec<(Highlight, Query)>,
+    pub mode_name: &'static str,
+    parser: Parser,
+    tree: Option<Tree>,
+}
+
+/// https://github.com/tree-sitter/tree-sitter-c
+fn c() -> Syntax {
+    let mode_name = "C";
+    let hl_rules: Vec<(Highlight, Query)> = vec![
+        (
+            Highlight::Number,
+            Query::new(
+                tree_sitter_c::language(),
+                "[(number_literal) (char_literal)] @number",
+            )
+            .expect("Malformed query"),
+        ),
+        (
+            Highlight::String,
+            Query::new(
+                tree_sitter_c::language(),
+                "[(string_literal) (system_lib_string)] @string",
+            )
+            .expect("Malformed query"),
+        ),
+    ];
     let mut parser = Parser::new();
     parser
         .set_language(tree_sitter_c::language())
         .expect("Error loading C grammar");
-    parser
+    let tree = None;
+    Syntax {
+        hl_rules,
+        mode_name,
+        parser,
+        tree,
+    }
 }
 
-pub fn rust() -> Parser {
+/// https://github.com/tree-sitter/tree-sitter-rust
+fn rust() -> Syntax {
+    let mode_name = "rust";
+    let hl_rules: Vec<(Highlight, Query)> = vec![
+        (
+            Highlight::Number,
+            Query::new(
+                tree_sitter_rust::language(),
+                "[ (integer_literal) (float_literal) ] @number",
+            )
+            .expect("Malformed query"),
+        ),
+        (
+            Highlight::String,
+            Query::new(
+                tree_sitter_rust::language(),
+                "[ (string_literal) (raw_string_literal) (char_literal) ] @string",
+            )
+            .expect("Malformed query"),
+        ),
+    ];
     let mut parser = Parser::new();
-    // let node_types = tree_sitter_rust::NODE_TYPES;
     parser
         .set_language(tree_sitter_rust::language())
         .expect("Error loading rust grammar");
-    parser
+    let tree = None;
+    Syntax {
+        hl_rules,
+        mode_name,
+        parser,
+        tree,
+    }
+}
+
+pub fn select_syntax_highlight(extension: &str) -> Option<Syntax> {
+    match extension {
+        "c" | "h" | "cpp" => Some(c()),
+        "rs" => Some(rust()),
+        _ => None,
+    }
 }
 
 /// Uses UTF16 representation to make it easier to extract Position for wide
 /// charaters in utf8 text
-pub fn load_code(parser: Option<&mut Parser>, source: &[u8]) -> Option<Tree> {
-    let source_utf16: Vec<u16> = std::str::from_utf8(source)
-        .unwrap()
-        .encode_utf16()
-        .collect();
-
-    parser.and_then(|p| p.parse_utf16(source_utf16, None))
+pub fn load_code(syntax_opt: Option<&mut Syntax>, source: &[u8]) {
+    if let Some(mut syntax) = syntax_opt {
+        let source_utf16: Vec<u16> = std::str::from_utf8(source)
+            .unwrap()
+            .encode_utf16()
+            .collect();
+        syntax.tree = syntax.parser.parse_utf16(source_utf16, None);
+    }
 }
 
-fn query_rust_number() -> Query {
-    Query::new(
-        tree_sitter_rust::language(),
-        "[ (integer_literal) (float_literal) ] @number",
-    )
-    .expect("Malformed query")
-}
-
-fn find_numbers(source: &[u8], tree: &Tree) -> Vec<(Point, Point)> {
+fn find_tokens(source: &[u8], tree: &Tree, query: &Query) -> Vec<(Point, Point)> {
     let mut cursor = QueryCursor::new();
     return cursor
-        .captures(&query_rust_number(), tree.root_node(), source)
+        .captures(query, tree.root_node(), source)
         .map(|(query_match, capture_index)| query_match.captures[capture_index].node)
         .map(|node| {
             let start_position = node.start_position();
@@ -68,25 +127,34 @@ fn find_numbers(source: &[u8], tree: &Tree) -> Vec<(Point, Point)> {
         .collect::<Vec<(Point, Point)>>();
 }
 
-pub fn highlight(source: &[u8], hs: &mut [&mut Vec<Highlight>], tree: &Tree) {
-    let markers = find_numbers(source, tree);
-    for (start, end) in markers {
-        if let Some(h) = hs.get_mut(start.row) {
-            for i in start.column..end.column {
-                h[i] = Highlight::Number;
+pub fn highlight(syntax_opt: Option<&Syntax>, source: &[u8], hs: &mut [&mut Vec<Highlight>]) {
+    if syntax_opt.is_none() || syntax_opt.unwrap().tree.is_none() {
+        return;
+    }
+
+    let syntax = syntax_opt.unwrap();
+    let tree = syntax.tree.as_ref().unwrap();
+    for (hl, query) in &syntax.hl_rules {
+        let markers = find_tokens(source, tree, query);
+        for (start, end) in markers {
+            if let Some(h) = hs.get_mut(start.row) {
+                for i in start.column..end.column {
+                    h[i] = *hl;
+                }
             }
         }
     }
 }
 
 #[cfg(test)]
-#[allow(unused_imports)]
-mod test_node_types_parsing {
-    use super::{find_numbers, load_code, rust};
-    use tree_sitter::{InputEdit, Parser, Point, Query, QueryCursor, QueryMatches, Tree};
+mod test_manual_highlight {
+    use super::{find_tokens, load_code, rust};
+    use tree_sitter::Point;
 
     #[test]
-    fn test_parsing_double() {
+    fn test_parsing_numbers() {
+        let mut syntax = rust();
+
         let source_utf8 = [
             "const ØØ:u32 = 123;",
             "const 안:f32 = 4.5;",
@@ -94,8 +162,12 @@ mod test_node_types_parsing {
         ]
         .join("\n");
 
-        let tree = load_code(Some(&mut rust()), &source_utf8.as_bytes()).unwrap();
-        let positions = find_numbers(&source_utf8.as_bytes(), &tree);
+        load_code(Some(&mut syntax), &source_utf8.as_bytes());
+        let positions = find_tokens(
+            &source_utf8.as_bytes(),
+            &syntax.tree.unwrap(),
+            &syntax.hl_rules[0].1,
+        );
 
         assert_eq!(
             vec![
