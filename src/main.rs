@@ -1454,11 +1454,7 @@ fn editor_draw_status_bar(editor_config: &EditorConfig, ab: &mut Vec<u8>) {
     let no_filename = "[No name]".to_string();
     let filename = editor_config.filename.as_ref().unwrap_or(&no_filename);
     let numrows = editor_config.rows.len();
-    let lines_info = if 1 == numrows {
-        "1 line".to_string()
-    } else {
-        format!("{} lines", numrows)
-    };
+    let lines_info = format!("L{}/{} C{}", editor_config.cursor.1, numrows, editor_config.cursor.0);
     let dirty = if editor_config.dirty {
         " (modified) "
     } else {
