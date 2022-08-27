@@ -1133,10 +1133,10 @@ fn editor_row_delete_char(
 
 /// Inserts a character at current cursor position. Contrary to the original
 /// implementation, does not update the position of the cursor. The original
-/// version expects `editor_refresh_screen` to update the rendered position of
-/// the cursor. In this version `editor_refresh_screen` does not mutate any
-/// state so the cursor needs to be moved with `editor_move_cursor` explicitly
-/// instead. This is done by the InsertChar event instead.
+/// version expects [`editor_refresh_screen`] to update the rendered position of
+/// the cursor. In this version [`editor_refresh_screen`] does not mutate any
+/// state so the cursor needs to be moved with [`editor_move_cursor`] explicitly
+/// instead. This is done by calling [`Event::InsertChar`] instead.
 fn editor_insert_char(editor_config: &mut EditorConfig, c: char) {
     let (cursor_x, cursor_y) = editor_config.cursor;
     let cx = cursor_x as usize;
@@ -1517,10 +1517,10 @@ fn editor_draw_message_bar(editor_config: &EditorConfig, ab: &mut Vec<u8>) {
     }
 }
 
-/// Writes the "ED" escape sequence (clear screen [1]) to the terminal. `\x1b`
+/// Writes the "ED" escape sequence ([clear screen][1]) to the terminal. `\x1b`
 /// starts the escape sequence and the sequence `[2J` clears the whole screen.
 ///
-/// [1] https://vt100.net/docs/vt100-ug/chapter3.html#ED
+/// [1]: https://vt100.net/docs/vt100-ug/chapter3.html#ED
 fn editor_refresh_screen(editor_config: &EditorConfig) -> Result<(), Error> {
     let col_offset = editor_config.col_offset;
     let row_offset = editor_config.row_offset;
