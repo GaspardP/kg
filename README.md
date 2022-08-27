@@ -33,6 +33,9 @@ cargo build
 
 # Start the application
 cargo run
+
+# Validate changes before publishing
+cargo test && cargo v && cargo fmt
 ```
 
 

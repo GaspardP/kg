@@ -1,0 +1,18 @@
+[alias]
+v = "validate"
+validate = [ "clippy", "--",
+"-D", "clippy::complexity",
+"-D", "clippy::pedantic",
+"-D", "clippy::perf",
+"-D", "clippy::style",
+"-D", "clippy::suspicious",
+
+"-A", "clippy::similar-names",
+
+"-D", "bare_trait_objects",
+"-D", "bindings_with_variant_name",
+"-D", "non_snake_case",
+"-D", "unreachable_code",
+"-D", "unreachable_patterns",
+"-D", "unused_variables",
+]
